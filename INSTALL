@@ -1,0 +1,70 @@
+scam-backscatter milter INSTALL
+
+PREREQUISITES
+
+You should have sendmail version 8.12.x or higher installed.  Sendmail should
+have been built with MILTER support enabled.
+
+You should have the milter library and development kit installed
+
+BUILD
+
+1.  Extract the scam-backscatter tarball
+
+2.  Change the current directory to the one where the scam-grey source code
+    was extracted.
+
+3.  If you are using FreeBSD, OpenBSD or NetBSD, rename the Makefile.bsd file
+    to Makefile
+
+	If you are using a Linux distribution, rename the Makefile.linux file to Makefile
+
+4.  Type make and press Enter to compile scam-grey
+
+INSTALL
+
+1.  Copy the scam-back file created above to the appropriate location
+    (/usr/local/sbin for example)
+
+2.  Generate a new sendmail configuration (sendmail.cf) with the following
+    additional settings:
+
+	  define(`confPRIVACY_FLAGS', `needmailhelo')dnl
+      INPUT_MAIL_FILTER(`scam-grey', `S=unix:/var/spool/scam/scam-back.sock, F=T, T=S:240s;R:240s;E:5m')dnl
+
+3.  Create a user (scamback for example) which will be used to run the milter
+
+4.  Create the /var/spool/scam directory
+
+5.  Verify that the user created in step 3 has read-write access to the
+    /var/spool/scam directory
+
+START UP
+
+1. Start scam-backscatter milter as a daemon
+
+	  scam-back -p unix:/var/spool/scam/scam-back.sock -u scamback -D
+
+4. Restart sendmail if you have generated a new sendmail configuration when
+   installing scam-backscatter
+
+SHUTDOWN
+
+Type the following command to stop scam-grey
+
+	kill `cat /var/spool/scam/scam-back.pid`
+
+CONFIGURATION
+
+Define the domain which you want to protect against backscatter and the
+IP address of the internal mail server in /etc/mail/scam.conf file as follows:
+
+BackAddrDomain:example.net
+BackSMTPServer:192.168.0.2
+
+Your users can bypass the backscatter check by relaying through your server
+using port 587 instead of port 25.
+
+http://www.elandsys.com/scam/
+scam-backscatter
+Copyright © 2006 - 2007 Eland Systems All Rights Reserved.
