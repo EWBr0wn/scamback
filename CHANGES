@@ -1,5 +1,11 @@
 scam-backscatter milter Changes
 
+Version 1.1 February 13, 2006
+
+Add support for multiple domains.
+Add -f command line switch to specify configuration file
+Add -P command line switch to specify pid file
+
 Version 1.0 January 29, 2007
 
 Official public open source release

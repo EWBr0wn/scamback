@@ -14,10 +14,12 @@ BUILD
 2.  Change the current directory to the one where the scam-grey source code
     was extracted.
 
-3.  If you are using FreeBSD, OpenBSD or NetBSD, rename the Makefile.bsd file
-    to Makefile
+3.  If you are using OpenBSD or NetBSD, rename the Makefile.bsd file
+    to Makefile.  If you are using FreeBSD, rename the Makefile.freebsd file.
 
-	If you are using a Linux distribution, rename the Makefile.linux file to Makefile
+	If you are using a Linux distribution, rename the Makefile.linux file to Makefile.
+
+	The Makefile.bsd file can be used for Solaris.
 
 4.  Type make and press Enter to compile scam-grey
 
@@ -64,6 +66,18 @@ BackSMTPServer:192.168.0.2
 
 Your users can bypass the backscatter check by relaying through your server
 using port 587 instead of port 25.
+
+If you are using multiple backend SMTP servers, use multiple instances of
+Scam-backscatter milter as follows:
+
+First instance:
+
+scam-back -p unix:/var/spool/scam/scam-back.sock -u scamback -D
+
+Second instance:
+
+scam-back -p unix:/var/spool/scam/scam-back2.sock -u scamback \
+-f /etc/mail/scam2.conf -P /var/spool/scam/scam-back2.pid -D
 
 http://www.elandsys.com/scam/
 scam-backscatter

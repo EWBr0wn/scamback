@@ -26,3 +26,4 @@ This repository attempts to show the historical releases as well as capture an a
 | **Filename**     | **Version** |              **MD5**             |                            **SHA256**                            |
 |------------------|-------------|:--------------------------------:|:----------------------------------------------------------------:|
 | scamback-1.0.tgz | 1.0         | c491880120eec9b4066c7e4e8dbaa5c9 | aab359b5730f0090fcf90b888166d6844397e4e73093d89b2845f0243456e559 |
+| scamback-1.1.tgz | 1.1         | 4f006dce3beca1f2f89d2cd0f527eb15 | 934f139ec7821bd7b36b200a8c658210a54357707aa41571f290709b8dbe417e |

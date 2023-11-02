@@ -60,7 +60,7 @@ Copyright © 2006-2007 Eland Systems All Rights Reserved.
 #define SCAMCONF "/etc/mail/scam.conf"
 #define RCPTREJTEXT "... User unknown"
 
-#define VERSION "1.0"
+#define VERSION "1.1"
 
 struct backent {
 	char	*rcptaddr;
@@ -74,10 +74,16 @@ pthread_rwlock_t back_lock;
 TAILQ_HEAD(backlist, backent);
 struct backlist backhead;
 
+struct doment {
+	char	*domain;
+	SLIST_ENTRY(doment)	domentries;
+};
+
+SLIST_HEAD(, doment) domlist;
+
 static int backvaexp = 86400;
 static int backinexp = 3000;
 char *backsmtpserver = NULL;
-char *backdomain = NULL;
 char hostname[256];
 
 struct mlfiPriv {
@@ -189,14 +195,14 @@ smtpopen(SMFICTX *ctx)
 
 	if ((priv->sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 	{
-		syslog (LOG_ERR, "cannot create socket");
+		syslog (LOG_WARNING, "cannot create socket");
 		return 1;
 	}
 	rc = clientconn( priv->sockfd, backsmtpserver, 25, 1500);
 	if ( 0 != rc)
 	{
 		backerr(ctx);
-		syslog (LOG_ERR, "cannot connect");
+		syslog (LOG_WARNING, "cannot connect");
 		return 0;
 	}
 
@@ -213,7 +219,7 @@ smtpopen(SMFICTX *ctx)
 	{
 		free(buffer);
 		backerr(ctx);
-		syslog (LOG_ERR, "cannot read banner");
+		syslog (LOG_WARNING, "cannot read banner");
 		return 0;
 	}
 
@@ -342,7 +348,6 @@ smtpclose(SMFICTX *ctx)
 	{
 		free(buffer);
 		shutdown(priv->sockfd, 2);
-		syslog (LOG_INFO, "close fd %d", priv->sockfd);
 		close(priv->sockfd);
 		priv->sockfd = -2;
 		return 1;
@@ -366,6 +371,27 @@ smtpclose(SMFICTX *ctx)
 	priv->sockfd = -2;
 
 	return 0;
+}
+
+int
+check_dom(const char* domname)
+{
+	int ret = 0;
+	struct doment *entre;
+
+	if (strlen(domname) < 1)
+		return 0;
+
+	SLIST_FOREACH(entre, &domlist, domentries)
+	{
+		if (strcasecmp(domname, entre->domain) == 0)
+		{
+			ret = 1;
+			break;
+		}
+	}
+
+	return ret;
 }
 
 static sfsistat
@@ -429,7 +455,7 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 	rcptaddr  = smfi_getsymval(ctx, "{rcpt_addr}");
 
 	domain = rfc822domain(rcptaddr);
-	if ((rcptaddr != NULL) && (*domain != '\0') && (strcasecmp(domain, backdomain) == 0))
+	if ((rcptaddr != NULL) && (check_dom( domain) == 1))
 	{
 		rc = lookupbacklist(rcptaddr);
 		switch (rc)
@@ -453,7 +479,7 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 		if (priv->sockfd == -2)
 		{
 			if (smtpopen(ctx) != 0)
-				return SMFIS_TEMPFAIL;
+				return SMFIS_CONTINUE;
 		}
 
 		if (priv->sockfd >= 0)
@@ -579,9 +605,11 @@ static void
 usage()
 {
 	fprintf(stdout, "scam-back version %s\n", VERSION);
-    fprintf(stdout, "usage: scam-back -p protocol:address [-u user] [-T timeout] [-R] [-D]\n");
+    fprintf(stdout, "usage: scam-back -p protocol:address [-u user] [-g group] [-T timeout] [-f config] [-P pidfile] [-R] [-D]\n");
 	fprintf(stdout, "          -D run as a daemon\n");
 	fprintf(stdout, "          -u run as specified user\n");
+	fprintf(stdout, "          -f use specified configuration file\n");
+	fprintf(stdout, "          -P use specified pid file\n");
 }
 
 static void
@@ -605,7 +633,7 @@ catch_signal( int signo )
 }
 
 int
-write_pid()
+write_pid(char *pidfile)
 {
 	char buf[20];
 	int fd;
@@ -613,13 +641,13 @@ write_pid()
 
 	pid = getpid ();
 
-	if ((fd = open (PIDFILE, O_CREAT | O_TRUNC | O_WRONLY, 0600)) == -1)
+	if ((fd = open (pidfile, O_CREAT | O_TRUNC | O_WRONLY, 0600)) == -1)
 	{
 		syslog (LOG_ERR, "cannot open pidfile");
 	} else {
 		snprintf (buf, sizeof (buf), "%ld", (long) pid);
 		if (write (fd, buf, strlen (buf)) != strlen (buf)) {
-			syslog (LOG_INFO, "cannot write to pidfile");
+			syslog (LOG_ERR, "cannot write to pidfile");
 		}
 		close(fd);
 	}
@@ -627,7 +655,7 @@ write_pid()
 }
 
 void
-daemonize()
+daemonize(char *pidfile)
 {
 
 	signal (SIGUSR1, catch_signal);
@@ -643,7 +671,7 @@ daemonize()
 	switch (fork ())
 	{
 		case 0:
-			syslog (LOG_INFO, "scam-back running");
+			syslog (LOG_INFO, "scam-back %s running", VERSION);
 			break;
 
 		case -1:
@@ -658,12 +686,12 @@ daemonize()
 	if (setsid() < 0)
 		exit(1);
 
-	write_pid();
+	write_pid(pidfile);
 	chdir("/");
 
 }
 
-int back_readconf()
+int back_readconf(const char* conf)
 {
 	FILE *fh;
 	char line[LINELENGTH + 1];
@@ -671,8 +699,9 @@ int back_readconf()
 
 	int lline;
 	int lineno = 0;
+	struct doment *domadd;
 
-	if ((fh = fopen( SCAMCONF, "r")) == NULL)
+	if ((fh = fopen( conf, "r")) == NULL)
 	{
 		return 1;
 	}
@@ -716,9 +745,14 @@ int back_readconf()
 			{
 				if (strlen(buf) > 3)
 				{
-					backdomain = strdup(buf);
+					domadd = (struct doment *)malloc(sizeof(struct doment));
+					if ((domadd->domain = strdup(buf)) == NULL)
+					{
+						return 1;
+					}
+					SLIST_INSERT_HEAD(&domlist, domadd, domentries);
+					syslog (LOG_DEBUG, "BackAddrDomain %s", buf);
 				}
-				syslog (LOG_DEBUG, "BackAddrDomain %s", buf);
 			}
 		}
 	}
@@ -732,7 +766,7 @@ main(int argc, char *argv[])
 {
 	int c;
 	int ret;
-	const char *args = "p:T:h:u:g:D";
+	const char *args = "p:T:h:u:f:g:P:D";
 	extern char *optarg;
 	int daemonmode = 0;
 	struct passwd *passwd = NULL;
@@ -741,6 +775,8 @@ main(int argc, char *argv[])
 	char *group = NULL;
 	uid_t uid = 0;
 	gid_t gid = 0;
+	char *conf = NULL;
+	char *pidfile =NULL;
 
 	umask(077);
 
@@ -792,7 +828,7 @@ main(int argc, char *argv[])
 			case 'u':
 				if (optarg == NULL || *optarg == '\0')
 				{
-					(void) fprintf(stderr, "Invalid username: %s\n", optarg);
+					(void) fprintf(stderr, "Invalid username\n");
 					exit(EX_USAGE);
 				}
 				user = strdup(optarg);
@@ -806,7 +842,7 @@ main(int argc, char *argv[])
 			case 'g':
 				if (optarg == NULL || *optarg == '\0')
 				{
-					(void) fprintf(stderr, "Invalid group name: %s\n", optarg);
+					(void) fprintf(stderr, "Invalid group name\n");
 					exit(EX_USAGE);
 				}
 				group = strdup(optarg);
@@ -814,6 +850,24 @@ main(int argc, char *argv[])
 				{
 					gid = grp->gr_gid;
 				}
+				break;
+
+			case 'f':
+				if (optarg == NULL || *optarg == '\0')
+				{
+					(void) fprintf(stderr, "Invalid configuration file\n");
+					exit(EX_USAGE);
+				}
+				conf = strdup(optarg);
+				break;
+
+			case 'P':
+				if (optarg == NULL || *optarg == '\0')
+				{
+					(void) fprintf(stderr, "Invalid pid file\n");
+					exit(EX_USAGE);
+				}
+				pidfile = strdup(optarg);
 				break;
 
 		  case 'd':
@@ -859,7 +913,13 @@ main(int argc, char *argv[])
 
 	memset(hostname, '\0', sizeof hostname);
 	(void) gethostname(hostname, sizeof hostname);
-	back_readconf();
+	SLIST_INIT( &domlist);
+
+	if (conf == NULL)
+		conf = strdup(SCAMCONF);
+
+	back_readconf(conf);
+	free(conf);
 
 	if (backsmtpserver == NULL)
 	{
@@ -867,7 +927,7 @@ main(int argc, char *argv[])
 		exit(EX_OSERR);
 	}
 
-	if (backdomain == NULL)
+	if (SLIST_EMPTY(&domlist))
 	{
 		syslog (LOG_ERR, "BackAddrDomain not defined");
 		exit(EX_OSERR);
@@ -881,14 +941,16 @@ main(int argc, char *argv[])
 		exit(EX_OSERR);
 	}
 
+	if (pidfile == NULL)
+		pidfile = strdup(PIDFILE);
+
 	if (daemonmode == 1)
 	{
-		daemonize();
+		daemonize(pidfile);
 	}
 
 	ret = smfi_main();
-	unlink(PIDFILE);
+	unlink(pidfile);
 	syslog (LOG_INFO, "Exit");
 	return(ret);
 }
-
