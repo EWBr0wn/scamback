@@ -1,5 +1,10 @@
 scam-backscatter milter Changes
 
+Version 1.5.0 October 5, 2009
+Add BackSMTPBackoff
+Add BACKOFF feature
+Add IPv6 Address can be used for BackSMTPServer
+
 Version 1.4.3 July 3, 2009
 Add FALLBACKEND
 Add support two entries in mailertable

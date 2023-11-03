@@ -27,8 +27,6 @@ Copyright © 2004-2008 Eland Systems All Rights Reserved.
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netdb.h>
-#include <arpa/nameser.h>
-#include <resolv.h>
 
 #include "util.h"
 
@@ -55,69 +53,33 @@ char* rfc822domain( char* rfc822addr )
 	return p;
 }
 
-unsigned int hostin_addr( char *host) {
-	unsigned char dnsreply[PACKETSZ];
-	char expdn[PACKETSZ];
-	unsigned char *p;
-	HEADER *dnsheader;
-	int ret = 0;
-	int dxp, i;
-	unsigned int ttl;
-	struct in_addr inaddr;
+int hostss(char* host, struct sockaddr_storage *ss, short int iprefer)
+{
+	int ret;
+	struct addrinfo hints, *ai;
 
-	ret = inet_pton(AF_INET, host, &inaddr);
-	if (ret == 1)
-		return inaddr.s_addr;
+	memset(&hints, 0, sizeof(hints));
+	switch (iprefer)
+	{
+		case 4:
+			hints.ai_family = PF_INET;
+			break;
+		case 6:
+			hints.ai_family = PF_INET6;
+			break;
 
-	if (res_init() == -1)
-		return 0;
-
-	memset( dnsreply, '\0', sizeof( dnsreply ));
-
-	ret = res_query( host, C_IN, T_A, dnsreply, sizeof( dnsreply ));
-
-	if (ret == -1)
-		return 0;
-
-	dnsheader = (HEADER *) &dnsreply;
-	if (dnsheader->rcode == 0) {
-		p = dnsreply +sizeof(HEADER);
-
-		if((dxp = dn_expand(dnsreply, dnsreply + ret, p, expdn, PACKETSZ)) < 0) {
-			return 0;
-		}
-
-		p += dxp;
-
-		GETSHORT(i, p);
-		if (i != T_A)
-			return 0;
-
-		p += INT16SZ;
-
-
-		if((dxp = dn_expand(dnsreply, dnsreply + ret, p, expdn, PACKETSZ)) < 0) {
-			return 0;
-		}
-
-		p += dxp;
-
-		GETSHORT(i, p);
-		if (i != T_A)
-			return 0;
-
-		p += INT16SZ;
-
-		GETLONG(ttl, p);
-		GETSHORT(i, p);
-
-		if (i == 4)
-		{
-			memcpy( (char *)&inaddr, p, INADDRSZ);
-			return inaddr.s_addr;
-		}
+		default:
+			hints.ai_family = PF_UNSPEC;
+			break;
 	}
+
+	hints.ai_socktype = SOCK_STREAM;
+	ret = getaddrinfo(host, "smtp", &hints, &ai);
+	if (ret != 0)
+		return ret;
+
+	memcpy( ss, ai->ai_addr, ai->ai_addrlen);
+	freeaddrinfo(ai);
 
 	return 0;
 }
-

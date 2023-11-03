@@ -1,5 +1,5 @@
 /*
-Copyright © 2004-2008 Eland Systems All Rights Reserved.
+Copyright © 2004-2009 Eland Systems All Rights Reserved.
 
    1. Redistribution and use in source and binary forms must retain the above
    copyright notice, this list of conditions and the following disclaimer.
@@ -21,10 +21,10 @@ Copyright © 2004-2008 Eland Systems All Rights Reserved.
 #ifndef ES_TCP_H_
 #define ES_TCP_H_
 
-int waitconnect(int sockfd, int timeout_msec);
-int clientconn(int sockfd, struct in_addr addr, short int port, unsigned int timeout);
-int clientread(int sockfd, char** buffer, size_t buffersize, unsigned int timeout);
-int clientwrite(int sockfd, char* buffer, int len);
+int waitconnect(int, int);
+int clientconn(int *, struct sockaddr_storage, short int, unsigned int);
+int clientread(int , char** buffer, size_t , unsigned int);
+int clientwrite(int, char* , int);
 
 #endif /* ES_TCP_H_ */
 

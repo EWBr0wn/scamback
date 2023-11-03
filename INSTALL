@@ -166,6 +166,11 @@ By default, Scam-backscatter does not return a temporary failure if the
 Backend SMTP server cannot be reached.  Setting BackErrorTempfail to
 Yes will return a temporary failure.
 
+BackSMTPBackoff:60
+The BackSMTPBackoff setting is used with the BACKOFF feature.  Connections
+to the backend SMTP will not be attempted within the backoff period starting
+from the time a connection could not be established.
+
 The Mailertable setting provides the path to the mailertable file.  The
 default value is /etc/mail/mailertable if the setting is undefined.
 
@@ -229,6 +234,9 @@ should only be enabled with the USEMAILERTABLE feature.
 example.net             ESMTP:[mail.example.net]:[mail2.example.net]
 
 HELOHOST Sets the hostname used for HELO/EHLO during compilation.
+
+BACKOFF Enables a backoff of the SMTP connection to the SMTP backend
+if there isn't any SMTP service running.
 
 TROUBLESHOOTING
 

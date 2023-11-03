@@ -35,6 +35,7 @@ Copyright © 2004-2009 Eland Systems All Rights Reserved.
 #include <sys/un.h>
 #include <sys/stat.h>
 #include <netinet/in.h>
+#include <netdb.h>
 #include <arpa/inet.h>
 #include <sys/ioctl.h>
 #include <syslog.h>
@@ -133,44 +134,59 @@ waitconnect(int sockfd, int timeout_msec)
 #endif /* HAVEPOLL */
 
 int
-clientconn(int sockfd, struct in_addr addr, short int port, unsigned int timeout)
+clientconn(int *sockfd, struct sockaddr_storage ss, short int port, unsigned int timeout)
 {
-	struct sockaddr_in sa;
+	int len;
 	int rc;
 
-	memset(&sa, 0, sizeof(sa));
-	sa.sin_family = AF_INET;
-	sa.sin_addr.s_addr = addr.s_addr;
-	sa.sin_port = htons(port);
+	switch (ss.ss_family)
+	{
+		case AF_INET:
+			((struct sockaddr_in *)&ss)->sin_port =  htons(port);
+			break;
+
+		case AF_INET6:
+			((struct sockaddr_in6 *)&ss)->sin6_port = htons(port);
+		break;
+
+		default:
+			syslog (LOG_ERR, "unspecified address family");
+			return -3;
+	}
+
+	len = ((struct sockaddr *)&ss)->sa_len;
+
+	if ((*sockfd = socket( ss.ss_family, SOCK_STREAM, 0)) < 0)
+	{
+		syslog (LOG_ERR, "cannot create socket %s", strerror(errno));
+		return -3;
+	}
 
 #if defined(O_NONBLOCK)
-	if (-1 == fcntl(sockfd, F_SETFL, fcntl(sockfd, F_GETFL, 0) | O_NONBLOCK))
+	if (-1 == fcntl(*sockfd, F_SETFL, fcntl(*sockfd, F_GETFL, 0) | O_NONBLOCK))
 		return -1;
 #else
 	rc = 1;
-	if (-1 == ioctl(sockfd, FIONBIO, &rc))
+	if (-1 == ioctl(*sockfd, FIONBIO, &rc))
 		return -1;
 #endif
-	rc = connect(sockfd, (struct sockaddr *)&sa, sizeof(sa));
-
-	if (0 == rc)
-		return 0;
-
-	if (errno != EINPROGRESS)
-		return -1;
+	if (connect(*sockfd, (struct sockaddr *)&ss, len) == -1)
+	{
+		if (errno != EINPROGRESS)
+			return -1;
+	}
 
 #ifdef HAVEPOLL
-	rc = waitpoll( sockfd, POLLOUT|POLLIN, timeout);
+	rc = waitpoll( *sockfd, POLLOUT|POLLIN, timeout);
 	if (rc == -2)
 	{
 		errno = ETIMEDOUT;
 	} else {
 		int er = -1;
 		socklen_t l = sizeof(er);
-		if (getsockopt(sockfd, SOL_SOCKET, SO_ERROR, (char *)&er, &l) < 0)
-		{
+		if (getsockopt(*sockfd, SOL_SOCKET, SO_ERROR, (char *)&er, &l) < 0)
 			return -2;
-		}
+
 		if (er ==  ECONNREFUSED)
 		{
 			errno = ECONNREFUSED;
@@ -178,7 +194,7 @@ clientconn(int sockfd, struct in_addr addr, short int port, unsigned int timeout
 		}
 	}
 #else
-	rc = waitconnect(sockfd, timeout);
+	rc = waitconnect(*sockfd, timeout);
 #endif /* HAVEPOLL */
 
 	return rc;
@@ -224,8 +240,7 @@ clientread(int sockfd, char** buffer, size_t buffersize, unsigned int timeout )
 
 		ret = select (sockfd + 1, &readfd, NULL, NULL, &interval);
 #endif /* HAVEPOLL */
-		switch(ret)
-		{
+		switch(ret) {
 			case -1:
 				if (errno != EINTR)
 				{
@@ -266,13 +281,10 @@ clientread(int sockfd, char** buffer, size_t buffersize, unsigned int timeout )
 						interval.tv_sec = 0;
 						interval.tv_usec = 100;
 #endif
-					}
-					else if (ret < 0)
-					{
+					}	else if (ret < 0)	{
 						if (errno != EINTR)
 							ret = -1;
-					} else if (ret == 0)
-					{
+					} else if (ret == 0)	{
 						ret = -1;
 					}
 #ifndef HAVEPOLL
@@ -309,9 +321,8 @@ clientwrite(int sockfd, char* buffer, int len)
 	ret = select(sockfd + 1, NULL, &fdw, NULL, &interval);
 
 	if ((ret == -1) || (! FD_ISSET(sockfd, &fdw)))
-	{
 		return -1;
-	}
+
 #endif /* HAVEPOLL */
 
 	do {
