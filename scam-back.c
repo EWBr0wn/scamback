@@ -1,5 +1,5 @@
 /*
-Copyright © 2006-2007 Eland Systems All Rights Reserved.
+Copyright © 2006-2008 Eland Systems All Rights Reserved.
 
    1. Redistribution and use in source and binary forms must retain the above
    copyright notice, this list of conditions and the following disclaimer.
@@ -66,7 +66,7 @@ Copyright © 2006-2007 Eland Systems All Rights Reserved.
 #define RCPTREJTEXT " User unknown"
 #define TEMPFAILTEXT "Internal error"
 
-#define VERSION "1.3.1"
+#define VERSION "1.3.2"
 
 #ifndef MAXHOSTNAMELEN
 #define MAXHOSTNAMELEN 256
@@ -273,11 +273,28 @@ savebacklist()
 }
 
 static int
+sockclose(SMFICTX *ctx)
+{
+	struct mlfiPriv *priv = MLFIPRIV;
+
+	if (priv->sockfd >= 0)
+		if (close(priv->sockfd) != 0)
+			syslog (LOG_ERR, "socket close error %d", errno);
+
+	priv->sockfd = -2;
+
+	return 0;
+}
+
+static int
 backerr(SMFICTX *ctx)
 {
 	struct mlfiPriv *priv = MLFIPRIV;
 
-	close(priv->sockfd);
+	if (priv->sockfd >= 0)
+		if (close(priv->sockfd) != 0)
+			syslog (LOG_ERR, "close fd error %d", errno);
+
 	priv->sockfd = -2;
 	smfi_setreply( ctx, "450", "4.7.0", TEMPFAILTEXT);
 
@@ -300,15 +317,14 @@ smtpopen(SMFICTX *ctx)
 	rc = clientconn( priv->sockfd, backsmtpserver, backsmtpport, 1500);
 	if ( 0 != rc)
 	{
-		backerr(ctx);
+		sockclose(ctx);
 		syslog (LOG_WARNING, "cannot connect");
-		return 0;
+		return 1;
 	}
 
 	if ((buffer = malloc(RECVBUFLEN)) == NULL)
 	{
-		close(priv->sockfd);
-		priv->sockfd = -2;
+		sockclose(ctx);
 		return 1;
 	}
 	rc = clientread( priv->sockfd, &buffer, RECVBUFLEN, 5 + smtpwait);
@@ -316,7 +332,7 @@ smtpopen(SMFICTX *ctx)
 	if (rc < 5)
 	{
 		free(buffer);
-		backerr(ctx);
+		sockclose(ctx);
 		syslog (LOG_WARNING, "cannot read banner");
 		if (smtpwait < MAXSMTPWAIT)
 		{
@@ -325,7 +341,7 @@ smtpopen(SMFICTX *ctx)
 			UNLOCK(back_lock);
 			syslog (LOG_INFO, "increased smtpwait to %d", smtpwait);
 		}
-		return 0;
+		return 1;
 	}
 
 	if ((*buffer != '2') || (*(buffer+1) != '2') || (*(buffer+2) != '0'))
@@ -338,8 +354,7 @@ smtpopen(SMFICTX *ctx)
 	free(buffer);
 	if ((buffer = malloc(RECVBUFLEN)) == NULL)
 	{
-		close(priv->sockfd);
-		priv->sockfd = -2;
+		sockclose(ctx);
 		return 1;
 	}
 
@@ -388,8 +403,7 @@ smtpopen(SMFICTX *ctx)
 	free(buffer);
 	if ((buffer = malloc(RECVBUFLEN)) == NULL)
 	{
-		close(priv->sockfd);
-		priv->sockfd = -2;
+		sockclose(ctx);
 		return 1;
 	}
 
@@ -443,8 +457,7 @@ smtpclose(SMFICTX *ctx)
 
 	if ((buffer = malloc(RECVBUFLEN)) == NULL)
 	{
-		close(priv->sockfd);
-		priv->sockfd = -2;
+		sockclose(ctx);
 		return 1;
 	}
 
@@ -455,8 +468,7 @@ smtpclose(SMFICTX *ctx)
 	if ( 0 != rc)
 	{
 		free(buffer);
-		close(priv->sockfd);
-		priv->sockfd = -2;
+		sockclose(ctx);
 		return 1;
 	}
 
@@ -465,24 +477,21 @@ smtpclose(SMFICTX *ctx)
 	if (rc < 5)
 	{
 		free(buffer);
-		close(priv->sockfd);
-		priv->sockfd = -2;
+		sockclose(ctx);
 		return 1;
 	}
 
 	if ((*buffer != '2') || (*(buffer+1) != '5') || (*(buffer+2) != '0'))
 	{
 		free(buffer);
-		close(priv->sockfd);
-		priv->sockfd = -2;
+		sockclose(ctx);
 		return 1;
 	}
 
 	free(buffer);
 	if ((buffer = malloc(RECVBUFLEN)) == NULL)
 	{
-		close(priv->sockfd);
-		priv->sockfd = -2;
+		sockclose(ctx);
 		return 1;
 	}
 
@@ -494,8 +503,7 @@ smtpclose(SMFICTX *ctx)
 	{
 		free(buffer);
 		shutdown(priv->sockfd, 2);
-		close(priv->sockfd);
-		priv->sockfd = -2;
+		sockclose(ctx);
 		return 1;
 	}
 
@@ -505,15 +513,13 @@ smtpclose(SMFICTX *ctx)
 	{
 		free(buffer);
 		shutdown(priv->sockfd, 2);
-		close(priv->sockfd);
-		priv->sockfd = -2;
+		sockclose(ctx);
 		return 1;
 	}
 
 	free(buffer);
 	shutdown(priv->sockfd, 2);
-	close(priv->sockfd);
-	priv->sockfd = -2;
+	sockclose(ctx);
 
 	return 0;
 }
@@ -735,8 +741,8 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 			if (rc < 5)
 			{
 				free(buffer);
-				backerr(ctx);
 				syslog (LOG_ERR, "cannot rcpttoreply on  %d", priv->sockfd);
+				backerr(ctx);
 				return SMFIS_TEMPFAIL;
 			} else {
 				if (((*buffer == '5') && (*(buffer+1) == '5') && (*(buffer+2) == '0')) || ((*buffer == '5') && (*(buffer+1) == '5') && (*(buffer+2) == '3')))
@@ -1334,13 +1340,13 @@ main(int argc, char *argv[])
 		syslog (LOG_ERR, "BackSMTPServer not defined");
 		exit(EX_OSERR);
 	}
-
+#ifndef ALLDOMAINS
 	if (SLIST_EMPTY(&domlist))
 	{
 		syslog (LOG_ERR, "BackAddrDomain not defined");
 		exit(EX_OSERR);
 	}
-
+#endif /* ALLDOMAINS */
 	TAILQ_INIT(&backhead);
 
 	if ((ret = pthread_rwlock_init(&back_lock, NULL)) != 0)
@@ -1369,3 +1375,4 @@ main(int argc, char *argv[])
 	syslog (LOG_INFO, "Exit");
 	return(ret);
 }
+

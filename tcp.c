@@ -165,7 +165,8 @@ clientread(int sockfd, char** buffer, size_t buffersize, unsigned int timeout )
 				if (errno != EINTR)
 				{
 					syslog( LOG_ERR, "clientread fail error %d on fd %d", errno, sockfd);
-					ret = -1;
+					/* ret = -1; */
+					return -1;
 				}
 				break;
 
