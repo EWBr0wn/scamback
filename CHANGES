@@ -1,5 +1,12 @@
 scam-backscatter milter Changes
 
+Version 1.4.2 February 13, 2008
+Fix documentation
+Add BackSMTPServer should be defined before BackAddrDomain setting
+Add Print features compiled in
+Add VERBOSE compilation switch
+Fix Wait on connection progress
+
 Version 1.4.1 September 19, 2008
 
 Add CCFLAGS
@@ -88,5 +95,5 @@ Official public open source release
 
 http://www.elandsys.com/scam/
 scam-backscatter
-Copyright © 2006 - 2008 Eland Systems All Rights Reserved.
+Copyright © 2006 - 2009 Eland Systems All Rights Reserved.
 

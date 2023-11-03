@@ -74,7 +74,7 @@ waitconnect(int sockfd, int timeout_msec)
     /* timeout, no connect today */
     return 1;
 
-  if(FD_ISSET(sockfd, &errfd)) {
+  if(FD_ISSET(sockfd, &fd)) {
     /* error condition caught */
     return 2;
   }
@@ -130,7 +130,6 @@ clientconn(int sockfd, struct in_addr addr, short int port, unsigned int timeout
 				rc = -1;
 		}
 	}
-
 	return rc;
 }
 

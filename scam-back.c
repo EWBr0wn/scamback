@@ -1,5 +1,5 @@
 /*
-Copyright © 2006-2008 Eland Systems All Rights Reserved.
+Copyright © 2006-2009 Eland Systems All Rights Reserved.
 
    1. Redistribution and use in source and binary forms must retain the above
    copyright notice, this list of conditions and the following disclaimer.
@@ -39,7 +39,6 @@ Copyright © 2006-2008 Eland Systems All Rights Reserved.
 #include <arpa/inet.h>
 
 #include <syslog.h>
-#include <signal.h>
 
 #include <pthread.h>
 
@@ -67,7 +66,7 @@ Copyright © 2006-2008 Eland Systems All Rights Reserved.
 #define RCPTREJTEXT " User unknown"
 #define TEMPFAILTEXT "Internal error"
 
-#define VERSION "1.4.1"
+#define VERSION "1.4.2"
 
 #ifndef MAXHOSTNAMELEN
 #define MAXHOSTNAMELEN 256
@@ -79,6 +78,7 @@ Copyright © 2006-2008 Eland Systems All Rights Reserved.
 
 #define MAXSMTPWAIT 5
 #define RECVBUFLEN	1024
+#define DEFSMTPPORT 25
 
 struct backent {
 	char	*rcptaddr;
@@ -96,6 +96,7 @@ struct doment {
 	char	*domain;
 #ifndef ALLDOMAINS
 	struct in_addr backinaddr;
+	int backsmtpport;
 #endif
 	SLIST_ENTRY(doment)	domentries;
 };
@@ -117,6 +118,10 @@ struct entry {
 
 SLIST_HEAD(, entry) daemonlist;
 
+struct domconn {
+	struct in_addr addr;
+	int backsmtpport;
+};
 
 pthread_rwlock_t skipvrfy_lock;
 
@@ -125,7 +130,7 @@ static int backinexp = 3000;
 #ifdef ALLDOMAINS
 struct in_addr backinaddr;
 #endif
-static int backsmtpport = 25;
+static int backsmtpport = DEFSMTPPORT;
 static int addrsubdomain = 0;
 static int backerrfail = 0;
 static unsigned int smtpwait = 0;
@@ -140,6 +145,7 @@ char *mailertable = NULL;
 struct mlfiPriv {
 	int	sockfd;
 	struct in_addr backinaddr;
+	int backsmtpport;
 #ifdef BITBUCKET
 	SLIST_HEAD(, entry)	brcpt;
 #endif
@@ -342,9 +348,9 @@ smtpopen(SMFICTX *ctx)
 #ifdef ALLDOMAINS
 	rc = clientconn( priv->sockfd, backinaddr, backsmtpport, timeoutconnect);
 #else
-	rc = clientconn( priv->sockfd, priv->backinaddr, backsmtpport, timeoutconnect);
+	rc = clientconn( priv->sockfd, priv->backinaddr, priv->backsmtpport, timeoutconnect);
 #endif /* ALLDOMAINS */
-	if ( 0 != rc)
+	if ((rc != 2) && ( 0 != rc))
 	{
 		sockclose(ctx);
 #ifdef ALLDOMAINS
@@ -354,7 +360,13 @@ smtpopen(SMFICTX *ctx)
 #endif /* ALLDOMAINS */
 		return 1;
 	}
-
+#ifdef VERBOSE
+#ifdef ALLDOMAINS
+		syslog (LOG_DEBUG, "Connected to backend SMTP\n");
+#else
+		syslog (LOG_DEBUG, "Connected to backend SMTP at %s:%d\n", inet_ntoa(priv->backinaddr), priv->backsmtpport);
+#endif
+#endif
 	if ((buffer = malloc(RECVBUFLEN)) == NULL)
 	{
 		sockclose(ctx);
@@ -376,6 +388,10 @@ smtpopen(SMFICTX *ctx)
 		}
 		return 1;
 	}
+
+#ifdef VERBOSE
+	syslog (LOG_DEBUG, "SMTP banner %s", buffer);
+#endif
 
 	if ((*buffer != '2') || (*(buffer+1) != '2') || (*(buffer+2) != '0'))
 	{
@@ -425,6 +441,9 @@ smtpopen(SMFICTX *ctx)
 		}
 		return 1;
 	}
+#ifdef VERBOSE
+	syslog (LOG_DEBUG, "Helo response %s", buffer);
+#endif
 
 	if ((*buffer != '2') || (*(buffer+1) != '5') || (*(buffer+2) != '0'))
 	{
@@ -467,6 +486,10 @@ smtpopen(SMFICTX *ctx)
 		syslog (LOG_ERR, "cannot read mailfrom reply");
 		return 1;
 	}
+
+#ifdef VERBOSE
+	syslog (LOG_DEBUG, "MailFrom response %s", buffer);
+#endif
 
 	if ((*buffer != '2') || (*(buffer+1) != '5') || (*(buffer+2) != '0'))
 	{
@@ -520,6 +543,9 @@ smtpclose(SMFICTX *ctx)
 		return 1;
 	}
 
+#ifdef VERBOSE
+	syslog (LOG_DEBUG, "Rset response %s", buffer);
+#endif
 	if ((*buffer != '2') || (*(buffer+1) != '5') || (*(buffer+2) != '0'))
 	{
 		free(buffer);
@@ -603,10 +629,10 @@ check_ip(const unsigned int checkip)
 }
 
 #ifndef ALLDOMAINS
-struct in_addr
+struct domconn
 check_dom(const char* domname)
 {
-	struct in_addr addr;
+	struct domconn conninfo;
 	struct doment *entre;
 	char *domainp = NULL;
 	int cmp;
@@ -614,14 +640,15 @@ check_dom(const char* domname)
 	char *cp = NULL;
 	char *entredomainLC = NULL;
 
-	addr.s_addr = 0;
+	conninfo.addr.s_addr = 0;
+	conninfo.backsmtpport = DEFSMTPPORT;
 
 	if ( strlen( domname ) < 1 )
-		return addr;
+		return conninfo;
 
 	domnameLC = strdup( domname );
 	if ( domnameLC == NULL )
-		return ( addr );
+		return conninfo;
 
 	for ( cp = domnameLC; *cp; ++cp )
 		*cp = tolower( *cp );
@@ -635,7 +662,7 @@ check_dom(const char* domname)
 		if ( entredomainLC == NULL )
 		{
 			free( domnameLC );
-			return addr;
+			return conninfo;
 		}
 
 		for ( cp = entredomainLC; *cp; ++cp )
@@ -645,7 +672,8 @@ check_dom(const char* domname)
 
 		if ( cmp == 0 )
 		{
-			addr = entre->backinaddr;
+			conninfo.addr = entre->backinaddr;
+			conninfo.backsmtpport = entre->backsmtpport;
 			break;
 		}
 
@@ -660,7 +688,8 @@ check_dom(const char* domname)
 
 			if (( cmp == 0) && (domainp != domnameLC) && (*(domainp - 1) == '.' ))
 			{
-				addr = entre->backinaddr;
+				conninfo.addr = entre->backinaddr;
+				conninfo.backsmtpport = entre->backsmtpport;
 				break;
 			}
 		}
@@ -670,7 +699,7 @@ check_dom(const char* domname)
 	if (entredomainLC != NULL)
 		free( entredomainLC );
 
-	return addr;
+	return conninfo;
 }
 #endif /* ALLDOMAINS */
 
@@ -768,7 +797,10 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 #else
 	if (domain != NULL)
 	{
-		priv->backinaddr = check_dom( domain);
+		struct domconn conninfo;
+		conninfo = check_dom( domain);
+		priv->backinaddr = conninfo.addr;
+		priv->backsmtpport = conninfo.backsmtpport;
 	} else
 		return SMFIS_CONTINUE;
 
@@ -847,6 +879,9 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 				backerr(ctx);
 				return SMFIS_TEMPFAIL;
 			} else {
+#ifdef VERBOSE
+				syslog (LOG_DEBUG, "RcptTo response %s", buffer);
+#endif
 				if (((*buffer == '5') && (*(buffer+1) == '5') && (*(buffer+2) == '0')) || ((*buffer == '5') && (*(buffer+1) == '5') && (*(buffer+2) == '3')))
 				{
 					upbacklist(rcptaddr, 1);
@@ -998,7 +1033,28 @@ static void
 usage()
 {
 	fprintf(stdout, "scam-back version %s\n", VERSION);
-    fprintf(stdout, "usage: scam-back -p protocol:address [-u user] [-g group] [-T timeout] [-f config] [-P pidfile] [-b path] [-R] [-D]\n");
+	fprintf(stdout, "  Features:\n");
+#ifdef VERBOSE
+	fprintf(stdout, "           VERBOSE\n");
+#endif
+#ifdef SM813
+	fprintf(stdout, "           SM813\n");
+#endif
+#ifdef EHLO
+	fprintf(stdout, "           EHLO\n");
+#endif
+#ifdef USEMAILERTABLE
+	fprintf(stdout, "           USEMAILERTABLE\n");
+#endif
+#ifdef BITBUCKET
+	fprintf(stdout, "           BITBUCKET\n");
+#endif
+#ifdef ALLDOMAINS
+	fprintf(stdout, "           ALLDOMAINS\n");
+#endif
+    fprintf(stdout, "  usage: scam-back -p protocol:address [-u user] [-g group] [-T timeout]\n");
+	fprintf(stdout, "                                       [-f config] [-P pidfile] [-b path]\n");
+	fprintf(stdout, "                                       [-R] [-D]\n");
 	fprintf(stdout, "          -D run as a daemon\n");
 	fprintf(stdout, "          -u run as specified user\n");
 	fprintf(stdout, "          -f use specified configuration file\n");
@@ -1014,12 +1070,10 @@ catch_signal( int signo )
 		case SIGUSR1:
 		   syslog (LOG_NOTICE, "Caught SIGUSR1, exiting...");
 			smfi_stop();
-			sleep(10);
 			exit (0) ;
 			break;
 
 		case SIGTERM:
-			sleep(10);
 			exit (0) ;
 			break;
 	}
@@ -1130,10 +1184,10 @@ read_mailertable()
 						{
 							domadd->backinaddr.s_addr = iaddr;
 
-							syslog (LOG_DEBUG, "BackSMTPServer %s", buf);
+							syslog (LOG_INFO, "BackSMTPServer %s", buf);
 							SLIST_INSERT_HEAD(&domlist, domadd, domentries);
 						} else {
-							syslog (LOG_ERR, "BackSMTPServer incorrect %s", buf);
+							syslog (LOG_ERR, "BackSMTPServer %s does not resolve to an IP Address", buf);
 							fclose(fh);
 							return 1;
 						}
@@ -1255,6 +1309,7 @@ int back_readconf(const char* conf)
 						exit(EX_OSERR);
 					}
 					domadd->backinaddr.s_addr = curbackinaddr.s_addr;
+					domadd->backsmtpport = backsmtpport;
 #endif /* ALLDOMAINS */
 					if ((domadd->domain = strdup(buf)) == NULL)
 					{
@@ -1367,9 +1422,8 @@ main(int argc, char *argv[])
 {
 	int c;
 	int ret;
-	const char *args = "p:T:h:u:f:g:b:P:D";
+	const char *args = "p:T:u:f:g:b:P:Dhv";
 	extern char *optarg;
-	int daemonmode = 0;
 	struct passwd *passwd = NULL;
 	struct group *grp;
 	char *user = NULL;
@@ -1378,6 +1432,7 @@ main(int argc, char *argv[])
 	gid_t gid = 0;
 	char *conf = NULL;
 	char *pidfile =NULL;
+	int daemonmode = 0;
 	struct CIDR *entcidr;
 
 	/* already a daemon */

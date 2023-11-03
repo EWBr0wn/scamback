@@ -39,6 +39,10 @@ INSTALL
 
       INPUT_MAIL_FILTER(`scam-back', `S=unix:/var/spool/scam/scam-back.sock, F=T, T=S:240s;R:240s;E:5m')dnl
 
+	  and this line if the macro definition for RCPT is undefined:
+
+	define(`confMILTER_MACROS_ENVRCPT', `{rcpt_mailer}, {rcpt_host}, {rcpt_addr}') dnl
+
 	The line should be added to the .mc file used to create the sendmail.cf.
 
 3.  Create a user (scamback for example) which will be used to run the milter
@@ -70,6 +74,9 @@ For example:
 
 scam-back -p unix:/var/spool/scam/scam-back.sock -u scamback
  -b /var/spool/scam/backscatter.txt -D
+
+To display usage and features compiled in, type:
+	scam-back -h
 
 SHUTDOWN
 
@@ -127,12 +134,12 @@ BackList:/var/spool/scam/backscatter.txt
 The TimeoutSMTPconnect setting determines the time to wait (seconds)
 for a connection to the backend SMTP server.
 
-TimeoutSMTPconnect:2
+TimeoutSMTPConnect:2
 
 The TimeoutSMTPReply setting determines the time to wait (seconds)
 for a reply from the backend SMTP server after sending a SMTP command.
 
-TimeoutSMTPreply:3
+TimeoutSMTPReply:3
 
 Your users can bypass the backscatter verification by relaying through your
 server using port 587 instead of port 25.
@@ -202,6 +209,9 @@ USEMAILERTABLE Reads the list of domains to verify and the backend SMTP
 server IP address from sendmail's mailertable file.
 
 example.com            SMTP:[192.0.2.1]
+example.org             ESMTP:[mail.example.org]
+
+Only the first entry on the right-hand side will be read.
 
 BITBUCKET Silently deletes invalid recipients.  This feature is
 not recommended as it can cause loss of mail.
@@ -210,6 +220,8 @@ SM813 Compile time option for Sendmail 8.13.x and 8.14.x
 
 ALLDOMAINS Verify recipient addresses for all domains against the SMTP backend.
 The BackAddrDomain setting is not required.
+
+VERBOSE Logs the output of the SMTP session with the backend
 
 TROUBLESHOOTING
 
@@ -247,10 +259,18 @@ appear frequently in your log:
 
  cannot read rcptto reply
 
+If you see the following error:
+
+  scam-back: cannot get rcpt address
+
+Verify whether your sendmail configuration (mc) file has this definition:
+
+  define(`confMILTER_MACROS_ENVRCPT', `{rcpt_mailer}, {rcpt_host}, {rcpt_addr}') dnl
+
 
 Refer to http://www.elandsys.com/resources/sendmail/milter.html for more
 information about libmilter.
 
 http://www.elandsys.com/scam/
 scam-backscatter
-Copyright © 2006 - 2008 Eland Systems All Rights Reserved.
+Copyright © 2006 - 2009 Eland Systems All Rights Reserved.
