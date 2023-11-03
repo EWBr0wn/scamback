@@ -2,8 +2,8 @@ scam-backscatter milter INSTALL
 
 PREREQUISITES
 
-You should have sendmail version 8.12.x or higher installed.  Sendmail should
-have been built with MILTER support enabled.
+You should have sendmail version 8.12.x or higher installed.  Sendmail
+should have been built with MILTER support enabled.
 
 You should have the milter library and development kit installed
 
@@ -11,17 +11,17 @@ BUILD
 
 1.  Extract the scam-backscatter tarball
 
-2.  Change the current directory to the one where the scam-grey source code
-    was extracted.
+2.  Change the current directory to the one where the scam-backscatter
+source code was extracted.
 
 3.  If you are using OpenBSD or NetBSD, rename the Makefile.bsd file
     to Makefile.  If you are using FreeBSD, rename the Makefile.freebsd file.
 
 	If you are using a Linux distribution, rename the Makefile.linux file to Makefile.
 
-	The Makefile.bsd file can be used for Solaris.
+	The Makefile.solaris file can be used for Solaris.
 
-4.  Type make and press Enter to compile scam-grey
+4.  Type make and press Enter to compile scam-backscatter
 
 INSTALL
 
@@ -64,8 +64,8 @@ IP address of the internal mail server in /etc/mail/scam.conf file as follows:
 BackAddrDomain:example.net
 BackSMTPServer:192.168.0.2
 
-Your users can bypass the backscatter check by relaying through your server
-using port 587 instead of port 25.
+Your users can bypass the backscatter check by relaying through your
+server using port 587 instead of port 25.
 
 If you are using multiple backend SMTP servers, use multiple instances of
 Scam-backscatter milter as follows:

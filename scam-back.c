@@ -44,7 +44,11 @@ Copyright © 2006-2007 Eland Systems All Rights Reserved.
 #include "libmilter/mfapi.h"
 
 #ifndef LINUX
+#ifdef SOLARIS
+#include "queue.h"
+#else
 #include <sys/queue.h>
+#endif
 #else
 #include "queue.h"
 #endif
@@ -60,7 +64,7 @@ Copyright © 2006-2007 Eland Systems All Rights Reserved.
 #define SCAMCONF "/etc/mail/scam.conf"
 #define RCPTREJTEXT "... User unknown"
 
-#define VERSION "1.1"
+#define VERSION "1.2"
 
 struct backent {
 	char	*rcptaddr;
@@ -84,6 +88,7 @@ SLIST_HEAD(, doment) domlist;
 static int backvaexp = 86400;
 static int backinexp = 3000;
 char *backsmtpserver = NULL;
+static int backsmtpport = 25;
 char hostname[256];
 
 struct mlfiPriv {
@@ -198,7 +203,7 @@ smtpopen(SMFICTX *ctx)
 		syslog (LOG_WARNING, "cannot create socket");
 		return 1;
 	}
-	rc = clientconn( priv->sockfd, backsmtpserver, 25, 1500);
+	rc = clientconn( priv->sockfd, backsmtpserver, backsmtpport, 1500);
 	if ( 0 != rc)
 	{
 		backerr(ctx);
@@ -455,7 +460,7 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 	rcptaddr  = smfi_getsymval(ctx, "{rcpt_addr}");
 
 	domain = rfc822domain(rcptaddr);
-	if ((rcptaddr != NULL) && (check_dom( domain) == 1))
+	if ((domain != NULL) && (check_dom( domain) == 1))
 	{
 		rc = lookupbacklist(rcptaddr);
 		switch (rc)
@@ -753,6 +758,15 @@ int back_readconf(const char* conf)
 					SLIST_INSERT_HEAD(&domlist, domadd, domentries);
 					syslog (LOG_DEBUG, "BackAddrDomain %s", buf);
 				}
+			} else if (sscanf( line, "backismtpport:%5[0-9]", buf) == 1)
+			{
+				int num;
+
+				num = atoi(buf);
+				if (num > 0)
+					backsmtpport = num;
+
+				syslog (LOG_DEBUG, "BackSMTPPort set to %d", backsmtpport);
 			}
 		}
 	}
@@ -954,3 +968,4 @@ main(int argc, char *argv[])
 	syslog (LOG_INFO, "Exit");
 	return(ret);
 }
+

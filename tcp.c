@@ -39,6 +39,10 @@ Copyright © 2004-2007 Eland Systems All Rights Reserved.
 #include <sys/ioctl.h>
 #include <syslog.h>
 
+#ifdef SOLARIS
+#include <sys/filio.h>
+#endif
+
 #include "tcp.h"
 
 int

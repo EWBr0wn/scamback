@@ -1,6 +1,12 @@
 scam-backscatter milter Changes
 
-Version 1.1 February 13, 2006
+Version 1.2 March 26, 2007
+
+Add BackSMTPPort
+Fix compilation on Solaris.  Patch submitted by Taro Yamada
+Fix bug in recipient address parsing
+
+Version 1.1 February 13, 2007
 
 Add support for multiple domains.
 Add -f command line switch to specify configuration file
