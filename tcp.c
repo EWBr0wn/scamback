@@ -84,7 +84,7 @@ waitconnect(int sockfd, int timeout_msec)
 }
 
 int
-clientconn(int sockfd, char* ipaddr, short int port, unsigned int timeout)
+clientconn(int sockfd, struct in_addr addr, short int port, unsigned int timeout)
 {
 	struct sockaddr_in sa;
 	int flags =1;
@@ -92,7 +92,7 @@ clientconn(int sockfd, char* ipaddr, short int port, unsigned int timeout)
 
 	memset(&sa, 0, sizeof(sa));
 	sa.sin_family = AF_INET;
-	sa.sin_addr.s_addr = inet_addr(ipaddr);
+	sa.sin_addr.s_addr = addr.s_addr;
 	sa.sin_port = htons(port);
 
 	if (-1 == ioctl(sockfd, FIONBIO, &flags))

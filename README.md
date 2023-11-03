@@ -36,3 +36,4 @@ This repository attempts to show the historical releases as well as capture an a
 | scamback-1.3.1.tgz | 1.3.1       | 1d9285684a5cb7a38223a3eeb6ed766e | 5c3ee0a49c831a22a5c87de5a5402293be4fe49f03b26e70d62fdc6c08a700a5 |
 | scamback-1.3.2.tgz | 1.3.2       | cc2088a6c526f5f4fd734be1e29475f5 | d66bfd0df21943cfc58d3eef1a00e2734c12d6fdcb7fb638ef4003316895a243 |
 | scamback-1.3.3.tgz | 1.3.3       | f9430794ba842d4531da7e5ab75d3b7c | 7f36489895ac5fb5092887fe88bcf249f1513c84693ff2ec0f16bd397e28af76 |
+| scamback-1.4.0.tgz | 1.4.0       | b81e61868759dff4cced7ae1d1704d1a | 0004174ca37f28e65cd3c8422aadf2909b086b3c9243e51fb3654655cb5b05ba |

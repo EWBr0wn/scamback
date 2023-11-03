@@ -78,8 +78,20 @@ CONFIGURATION
 Define the domain which you want to protect against backscatter and the
 IP address of the internal mail server in /etc/mail/scam.conf file as follows:
 
-BackAddrDomain:example.net
 BackSMTPServer:192.168.0.2
+BackAddrDomain:example.net
+
+The BackSMTPServer can be either a hostname or an IP address.  The setting
+should be defined before the BackAddrDomain setting.  When there are multiple
+BackSMTPServer settings, the BackAddrDomain setting is mapped to the
+BackSMTPServer setting preceeding it.
+
+Only one BackSMTPServer setting is allowed with the ALLDOMAINS feature.
+
+These two settings are not required with the USEMAILERTABLE feature as the
+mapping of BackAddrDomain to BackSMTPServer is read in from the
+mailertable file.
+
 
 The following entry is optional. It should be used if the backend mail server
 is running on a non-standard port. Scam-backscatter will use tcp port 25 by
@@ -104,17 +116,54 @@ example.net is listed as a domain to be verified.  This default value is no.
 BackAddrSubdomains:Yes
 
 The BackList setting points to the file where the list of valid and invalid
-recipient addresses is read from at startup and saved to at shutdown
+recipient addresses is read from at startup and saved to at shutdown.
 
 BackList:/var/spool/scam/backscatter.txt
 
-Your users can bypass the backscatter check by relaying through your
+The TimeoutSMTPconnect setting determines the time to wait (seconds)
+for a connection to the backend SMTP server.
+
+TimeoutSMTPconnect:2
+
+The TimeoutSMTPReply setting determines the time to wait (seconds)
+for a reply from the backend SMTP server after sending a SMTP command.
+
+TimeoutSMTPreply:3
+
+Your users can bypass the backscatter verification by relaying through your
 server using port 587 instead of port 25.
+
+BackSkipDaemon:MSA
+BackSkipDaemon:MSA-v6
+
+If your configuration file has one or more BackSkipDaemon settings,
+add the MSA daemon as it is only automatically included when the setting
+is not defined.
+
+BackSkipVerify:127.0.0.1
+
+Recipient validation is skipped for the IP address.  This setting also accepts
+a cidr such as 192.0.2.0/24
+
+BackSkipVerify:192.0.2.2
+BackSkipVerify:192.0.2.32/28
 
 Scam-backscatter does not perform verification for locally submitted mail.
 
-If you are using multiple backend SMTP servers, use multiple instances of
-Scam-backscatter milter as follows:
+The Mailertable setting provides the path to the mailertable file.  The
+default value is /etc/mail/mailertable if the setting is undefined.
+
+Mailertable:/etc/mail/mailertable
+
+You can use the following configuration to validate recipient addresses
+against different backend SMTP servers:
+
+BackSMTPServer:192.0.2.1
+BackAddrDomain:example.net
+BackSMTPServer:192.0.2.2
+BackAddrDomain:example.org
+
+Or you can run multiple instances of Scam-backscatter as follows:
 
 First instance:
 
@@ -124,6 +173,7 @@ Second instance:
 
 scam-back -p unix:/var/spool/scam/scam-back2.sock -u scamback \
 -f /etc/mail/scam2.conf -P /var/spool/scam/scam-back2.pid -D
+
 
 SMTP Backend out of service
 
@@ -155,7 +205,7 @@ The BackAddrDomain setting is not required.
 TROUBLESHOOTING
 
 The syslog facility is used to log information to maillog.  If you experience
-any trouble, verify your maillog for errors.
+any trouble, review your maillog for errors.
 
 Scam-backscatter initiates a SMTP session with the Backend SMTP server.  If
 the Backend rate limits SMTP connections, it may cause Scam-backscatter
@@ -176,6 +226,18 @@ If you see the following error in your mail log:
 recompile libmilter with the following option:
 
  APPENDDEF(`confENVDEF', `-DSM_CONF_POLL=1 ')dnl
+
+You can increase the TimeoutSMTPReply value if the following error messages
+appear frequently in your log:
+
+ cannot read backend SMTP banner
+
+ cannot read helo reply
+
+ cannot read mailfrom reply
+
+ cannot read rcptto reply
+
 
 Refer to http://www.elandsys.com/resources/sendmail/milter.html for more
 information about libmilter.

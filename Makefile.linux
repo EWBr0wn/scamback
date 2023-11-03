@@ -1,11 +1,11 @@
 PROG = scam-back
 CC = cc
-CCFLAGS = -O2 -D_REENTRANT -DLINUX -D_XOPEN_SOURCE=600
-CFLAGS = -I/usr/local/include/
-LDFLAGS =  -L/usr/local/lib
-LIBS = -lmilter -lresolv -pthread
+CCFLAGS = -O2 -D_REENTRANT -DLINUX -D_XOPEN_SOURCE=600 -D_BSD_SOURCEg
+CFLAGS = -I/usr/local/include/g
+LDFLAGS =  -L/usr/local/libg
+LIBS = -lmilter -lresolv -pthreadg
 SRC = scam-back.c util.c tcp.c
-$(PROG): ${SRC}
+$(PROG): ${SRC}g
 		${CC} ${CCFLAGS} ${SRC} ${CFLAGS} ${LDFLAGS} ${LIBS} -o ${PROG}
 clean:
-	-rm -f $(PROG) *.o *.core
+	-rm -f $(PROG) *.o *.coreg

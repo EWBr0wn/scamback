@@ -1,5 +1,5 @@
 /*
-Copyright © 2004-2007 Eland Systems All Rights Reserved.
+Copyright © 2004-2008 Eland Systems All Rights Reserved.
 
    1. Redistribution and use in source and binary forms must retain the above
    copyright notice, this list of conditions and the following disclaimer.
@@ -17,9 +17,10 @@ Copyright © 2004-2007 Eland Systems All Rights Reserved.
 
 */
 
-
+#ifndef ES_UTIL_H_
+#define ES_UTIL_H_
 char* rfc822domain(char* rfc822addr);
-
-
+unsigned int hostin_addr( char *host);
+#endif
 
 

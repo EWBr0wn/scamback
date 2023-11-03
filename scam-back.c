@@ -39,6 +39,7 @@ Copyright © 2006-2008 Eland Systems All Rights Reserved.
 #include <arpa/inet.h>
 
 #include <syslog.h>
+#include <signal.h>
 
 #include <pthread.h>
 
@@ -66,14 +67,14 @@ Copyright © 2006-2008 Eland Systems All Rights Reserved.
 #define RCPTREJTEXT " User unknown"
 #define TEMPFAILTEXT "Internal error"
 
-#define VERSION "1.3.3"
+#define VERSION "1.4"
 
 #ifndef MAXHOSTNAMELEN
 #define MAXHOSTNAMELEN 256
 #endif
 
 #ifdef USEMAILERTABLE
-#define MAILERTABLE "/etc/mail/mailertable"
+#define DEFMAILERTABLE "/etc/mail/mailertable"
 #endif
 
 #define MAXSMTPWAIT 5
@@ -93,29 +94,51 @@ struct backlist backhead;
 
 struct doment {
 	char	*domain;
+#ifndef ALLDOMAINS
+	struct in_addr backinaddr;
+#endif
 	SLIST_ENTRY(doment)	domentries;
 };
 
 SLIST_HEAD(, doment) domlist;
 
-#ifdef BITBUCKET
+struct CIDR {
+	unsigned int ip;
+	short int masklen;
+	SLIST_ENTRY(CIDR)	cidrs;
+};
+
+SLIST_HEAD(, CIDR)	backcidr;
+
 struct entry {
 	char	*c;
 	SLIST_ENTRY(entry)	entries;
 };
-#endif
+
+SLIST_HEAD(, entry) daemonlist;
+
+
+pthread_rwlock_t skipvrfy_lock;
 
 static int backvaexp = 86400;
 static int backinexp = 3000;
-char *backsmtpserver = NULL;
+#ifdef ALLDOMAINS
+struct in_addr backinaddr;
+#endif
 static int backsmtpport = 25;
 static int addrsubdomain = 0;
 static unsigned int smtpwait = 0;
+static unsigned int timeoutconnect = 1500;
+static unsigned int timeoutreply = 3;
 char hostname[MAXHOSTNAMELEN+1];
 char *backlisttxt = NULL;
+#ifdef USEMAILERTABLE
+char *mailertable = NULL;
+#endif
 
 struct mlfiPriv {
 	int	sockfd;
+	struct in_addr backinaddr;
 #ifdef BITBUCKET
 	SLIST_HEAD(, entry)	brcpt;
 #endif
@@ -297,7 +320,7 @@ backerr(SMFICTX *ctx)
 			syslog (LOG_ERR, "close fd error %d", errno);
 
 	priv->sockfd = -2;
-	smfi_setreply( ctx, "450", "4.7.0", TEMPFAILTEXT);
+	smfi_setreply( ctx, "451", "4.7.0", TEMPFAILTEXT);
 
 	return 0;
 }
@@ -312,14 +335,22 @@ smtpopen(SMFICTX *ctx)
 
 	if ((priv->sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 	{
-		syslog (LOG_WARNING, "cannot create socket");
+		syslog (LOG_ERR, "cannot create socket");
 		return 1;
 	}
-	rc = clientconn( priv->sockfd, backsmtpserver, backsmtpport, 1500);
+#ifdef ALLDOMAINS
+	rc = clientconn( priv->sockfd, backinaddr, backsmtpport, timeoutconnect);
+#else
+	rc = clientconn( priv->sockfd, priv->backinaddr, backsmtpport, timeoutconnect);
+#endif /* ALLDOMAINS */
 	if ( 0 != rc)
 	{
 		sockclose(ctx);
-		syslog (LOG_WARNING, "cannot connect");
+#ifdef ALLDOMAINS
+		syslog (LOG_WARNING, "cannot connect to backend SMTP at %s", inet_ntoa(backinaddr));
+#else
+		syslog (LOG_WARNING, "cannot connect to backend SMTP at %s", inet_ntoa(priv->backinaddr));
+#endif /* ALLDOMAINS */
 		return 1;
 	}
 
@@ -328,13 +359,13 @@ smtpopen(SMFICTX *ctx)
 		sockclose(ctx);
 		return 1;
 	}
-	rc = clientread( priv->sockfd, &buffer, RECVBUFLEN, 5 + smtpwait);
+	rc = clientread( priv->sockfd, &buffer, RECVBUFLEN, timeoutreply + smtpwait);
 
 	if (rc < 5)
 	{
 		free(buffer);
 		sockclose(ctx);
-		syslog (LOG_WARNING, "cannot read banner");
+		syslog (LOG_WARNING, "cannot read backend SMTP banner");
 		if (smtpwait < MAXSMTPWAIT)
 		{
 			WRLOCK(back_lock);
@@ -347,6 +378,8 @@ smtpopen(SMFICTX *ctx)
 
 	if ((*buffer != '2') || (*(buffer+1) != '2') || (*(buffer+2) != '0'))
 	{
+		if (*buffer == '5')
+			syslog (LOG_ERR, "backend SMTP service unavailable");
 		free(buffer);
 		backerr(ctx);
 		return 1;
@@ -371,17 +404,17 @@ smtpopen(SMFICTX *ctx)
 	{
 		free(buffer);
 		backerr(ctx);
-		syslog (LOG_ERR, "cannot writehelo");
+		syslog (LOG_ERR, "cannot send helo");
 		return 1;
 	}
 
-	rc = clientread( priv->sockfd, &buffer, RECVBUFLEN, 2 + smtpwait );
+	rc = clientread( priv->sockfd, &buffer, RECVBUFLEN, timeoutreply + smtpwait );
 
 	if (rc < 5)
 	{
 		free(buffer);
 		backerr(ctx);
-		syslog (LOG_ERR, "cannot heloreply");
+		syslog (LOG_ERR, "cannot read helo reply");
 		if (smtpwait < MAXSMTPWAIT)
 		{
 			WRLOCK(back_lock);
@@ -395,7 +428,11 @@ smtpopen(SMFICTX *ctx)
 	if ((*buffer != '2') || (*(buffer+1) != '5') || (*(buffer+2) != '0'))
 	{
 		buffer[rc]= '\0';
-		syslog (LOG_ERR, "cannot helocode");
+		if (*buffer == '5')
+		{
+			syslog (LOG_ERR, "backend rejected helo");
+		} else
+			syslog (LOG_ERR, "backend returned an error on helo");
 		free(buffer);
 		backerr(ctx);
 		return 1;
@@ -416,17 +453,17 @@ smtpopen(SMFICTX *ctx)
 	{
 		free(buffer);
 		backerr(ctx);
-		syslog (LOG_ERR, "cannot writemailfrom");
+		syslog (LOG_ERR, "cannot send mailfrom");
 		return 1;
 	}
 
-	rc = clientread( priv->sockfd, &buffer, RECVBUFLEN , 3);
+	rc = clientread( priv->sockfd, &buffer, RECVBUFLEN , timeoutreply);
 
 	if (rc < 5)
 	{
 		free(buffer);
 		backerr(ctx);
-		syslog (LOG_ERR, "cannot mailfromreply");
+		syslog (LOG_ERR, "cannot read mailfrom reply");
 		return 1;
 	}
 
@@ -436,7 +473,7 @@ smtpopen(SMFICTX *ctx)
 		{
 			syslog (LOG_ERR, "backend did not accept sender address");
 		} else {
-			syslog (LOG_ERR, "cannot mailfromcode");
+			syslog (LOG_ERR, "unexpected SMTP reply code on mailfrom");
 		}
 
 		free(buffer);
@@ -473,7 +510,7 @@ smtpclose(SMFICTX *ctx)
 		return 1;
 	}
 
-	rc = clientread( priv->sockfd, &buffer, RECVBUFLEN, 3 );
+	rc = clientread( priv->sockfd, &buffer, RECVBUFLEN, timeoutreply );
 
 	if (rc < 5)
 	{
@@ -508,7 +545,7 @@ smtpclose(SMFICTX *ctx)
 		return 1;
 	}
 
-	rc = clientread( priv->sockfd, &buffer, RECVBUFLEN, 3 );
+	rc = clientread( priv->sockfd, &buffer, RECVBUFLEN, timeoutreply );
 
 	if (rc < 5)
 	{
@@ -525,11 +562,50 @@ smtpclose(SMFICTX *ctx)
 	return 0;
 }
 
-#ifndef ALLDOMAINS
 int
-check_dom(const char* domname)
+ip_cidr(const unsigned int ip, const short int masklen, const unsigned int checkip)
+{
+	unsigned int ipaddr = 0;
+	unsigned int cidrip = 0;
+	unsigned int subnet = 0;
+
+	subnet = ~0;
+	subnet = subnet << (32 - masklen);
+
+	cidrip = htonl(ip) & subnet;
+	ipaddr = ntohl(checkip) & subnet;
+
+	if (cidrip == ipaddr)
+		return 1;
+
+	return 0;
+}
+
+int
+check_ip(const unsigned int checkip)
 {
 	int ret = 0;
+	struct CIDR *entcidr;
+
+	RDLOCK(skipvrfy_lock);
+	SLIST_FOREACH(entcidr, &backcidr, cidrs)
+	{
+		if (ip_cidr(entcidr->ip, entcidr->masklen, checkip) == 1)
+		{
+			ret = 1;
+			break;
+		}
+	}
+	UNLOCK(skipvrfy_lock);
+
+	return ret;
+}
+
+#ifndef ALLDOMAINS
+struct in_addr
+check_dom(const char* domname)
+{
+	struct in_addr addr;
 	struct doment *entre;
 	char *domainp = NULL;
 	int cmp;
@@ -537,12 +613,14 @@ check_dom(const char* domname)
 	char *cp = NULL;
 	char *entredomainLC = NULL;
 
+	addr.s_addr = 0;
+
 	if ( strlen( domname ) < 1 )
-		return ret;
+		return addr;
 
 	domnameLC = strdup( domname );
 	if ( domnameLC == NULL )
-		return ( ret );
+		return ( addr );
 
 	for ( cp = domnameLC; *cp; ++cp )
 		*cp = tolower( *cp );
@@ -556,7 +634,7 @@ check_dom(const char* domname)
 		if ( entredomainLC == NULL )
 		{
 			free( domnameLC );
-			return ret;
+			return addr;
 		}
 
 		for ( cp = entredomainLC; *cp; ++cp )
@@ -566,7 +644,7 @@ check_dom(const char* domname)
 
 		if ( cmp == 0 )
 		{
-			ret = 1;
+			addr = entre->backinaddr;
 			break;
 		}
 
@@ -581,7 +659,7 @@ check_dom(const char* domname)
 
 			if (( cmp == 0) && (domainp != domnameLC) && (*(domainp - 1) == '.' ))
 			{
-				ret = 1;
+				addr = entre->backinaddr;
 				break;
 			}
 		}
@@ -591,7 +669,7 @@ check_dom(const char* domname)
 	if (entredomainLC != NULL)
 		free( entredomainLC );
 
-	return ret;
+	return addr;
 }
 #endif /* ALLDOMAINS */
 
@@ -626,32 +704,40 @@ mlfi_connect(SMFICTX *ctx, char *hostname,  _SOCK_ADDR *hostaddr)
 
 	if ((remoteaddr != NULL) && (remoteaddr->sin_family == AF_INET))
 	{
-		if (remoteaddr->sin_addr.s_addr == inet_addr("127.0.0.1"))
+		if (check_ip(remoteaddr->sin_addr.s_addr) == 1)
 			return SMFIS_ACCEPT;
 	}
 
 	daemonname = smfi_getsymval(ctx, "{daemon_name}");
 	if (daemonname != NULL)
 	{
-		if (strcasecmp(daemonname, "MSA") == 0)
+		struct entry *daentry;
+		SLIST_FOREACH(daentry, &daemonlist, entries)
 		{
-				return SMFIS_ACCEPT;
+			if (strcasecmp(daemonname, daentry->c) == 0)
+			{
+					return SMFIS_ACCEPT;
+			}
 		}
 	}
 
 	return SMFIS_CONTINUE;
 }
 
-#ifdef BITBUCKET
+
 static sfsistat
 mlfi_envfrom(SMFICTX *ctx, char **argv)
 {
 	struct mlfiPriv *priv = MLFIPRIV;
-
+#ifdef BITBUCKET
 	SLIST_INIT(&priv->brcpt);
+#endif
+#ifndef ALLDOMAINS
+	priv->backinaddr.s_addr = 0;
+#endif
 	return SMFIS_CONTINUE;
 }
-#endif
+
 
 static sfsistat
 mlfi_envrcpt(SMFICTX *ctx, char **argv)
@@ -679,7 +765,13 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 #ifdef ALLDOMAINS
 	if (domain != NULL)
 #else
-	if ((domain != NULL) && (check_dom( domain) == 1))
+	if (domain != NULL)
+	{
+		priv->backinaddr = check_dom( domain);
+	} else
+		return SMFIS_CONTINUE;
+
+	if (priv->backinaddr.s_addr > 0)
 #endif
 	{
 		rc = lookupbacklist(rcptaddr);
@@ -733,16 +825,16 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 			{
 				free(buffer);
 				backerr(ctx);
-				syslog (LOG_ERR, "cannot rcpttosend");
+				syslog (LOG_ERR, "cannot send rcptto");
 				return SMFIS_TEMPFAIL;
 			}
 
-			rc = clientread( priv->sockfd, &buffer, RECVBUFLEN , 3);
+			rc = clientread( priv->sockfd, &buffer, RECVBUFLEN , timeoutreply);
 
 			if (rc < 5)
 			{
 				free(buffer);
-				syslog (LOG_ERR, "cannot rcpttoreply on  %d", priv->sockfd);
+				syslog (LOG_ERR, "cannot read rcptto reply on  %d", priv->sockfd);
 				backerr(ctx);
 				return SMFIS_TEMPFAIL;
 			} else {
@@ -846,9 +938,10 @@ mlfi_cleanup(SMFICTX *ctx)
 		free(rcpt);
 	}
 #endif
-
+#ifndef ALLDOMAINS
+	priv->backinaddr.s_addr = 0;
+#endif
 	return 0;
-
 }
 
 static sfsistat
@@ -878,11 +971,7 @@ struct smfiDesc smfilter =
 #endif
 	mlfi_connect,		/* connection info filter */
 	NULL,		/* SMTP HELO command filter */
-#ifdef BITBUCKET
 	mlfi_envfrom,
-#else
-	NULL,		/* envelope sender filter */
-#endif
 	mlfi_envrcpt,	/* envelope recipient filter */
 	mlfi_header,				/* header filter */
 	NULL,	/* end of header */
@@ -995,10 +1084,9 @@ read_mailertable()
 	struct doment *domadd;
 	char line[LINELENGTH + 1];
 	char buf[LINELENGTH + 1];
-	int first = 0;
 	char *token;
 
-	if ((fh = fopen( MAILERTABLE, "r")) == NULL) {
+	if ((fh = fopen( mailertable, "r")) == NULL) {
 		return 1;
 	}
 
@@ -1017,21 +1105,28 @@ read_mailertable()
 				fclose(fh);
 				return 1;
 			}
-			SLIST_INSERT_HEAD(&domlist, domadd, domentries);
 			syslog (LOG_DEBUG, "BackAddrDomain %s", buf);
-			if (first == 0)
+
+			token = strtok(line, "[");
+			if (token != NULL)
 			{
-				first = 1;
-				token = strtok(line, "[");
+				token = strtok(NULL, "[");
+
 				if (token != NULL)
 				{
-					token = strtok(NULL, "[");
-					if (token != NULL)
+					if (sscanf( token, "%256[A-Za-z0-9-.]", buf) == 1)
 					{
-						if (sscanf( token, "%256[0-9.]", buf) == 1)
+						unsigned int iaddr = hostin_addr(buf);
+						if (iaddr != 0)
 						{
-							backsmtpserver = strdup(buf);
+							domadd->backinaddr.s_addr = iaddr;
+
 							syslog (LOG_DEBUG, "BackSMTPServer %s", buf);
+							SLIST_INSERT_HEAD(&domlist, domadd, domentries);
+						} else {
+							syslog (LOG_ERR, "BackSMTPServer incorrect %s", buf);
+							fclose(fh);
+							return 1;
 						}
 					}
 				}
@@ -1055,6 +1150,11 @@ int back_readconf(const char* conf)
 #ifndef USEMAILERTABLE
 	struct doment *domadd;
 #endif
+#ifndef ALLDOMAINS
+	 struct in_addr curbackinaddr;
+
+	curbackinaddr.s_addr = 0;
+#endif
 
 #ifdef BITBUCKET
 	syslog (LOG_INFO, "bitbucket enabled");
@@ -1073,6 +1173,13 @@ int back_readconf(const char* conf)
 		lline = strlen(line);
 		if (lline > 16)
 		{
+			unsigned int ip1 = 0;
+			unsigned int ip2 = 0;
+			unsigned int ip3 = 0;
+			unsigned int ip4 = 0;
+			unsigned int ipm = 0;
+			struct CIDR *entcidr;
+
 			if (sscanf( line, "BackValidAddrExp:%7[0-9]", buf) == 1)
 			{
 				int num;
@@ -1092,12 +1199,38 @@ int back_readconf(const char* conf)
 
 				syslog (LOG_DEBUG, "BackInvalidAddrExp set to %d seconds", backinexp);
 			}
-#ifndef USEMAILERTABLE
-			else if (sscanf( line, "BackSMTPServer:%16[0-9-.]", buf) == 1)
+#ifdef USEMAILERTABLE
+			else if (sscanf( line, "Mailertable:%256[^\n]", buf) == 1)
 			{
 				if (strlen(buf) > 6)
 				{
-					backsmtpserver = strdup(buf);
+					if (mailertable == NULL)
+					{
+						mailertable = strdup(buf);
+						syslog (LOG_DEBUG, "Mailertable set to %s", mailertable);
+					}
+				}
+			}
+#else
+			else if (sscanf( line, "BackSMTPServer:%255[A-Za-z0-9-.]", buf) == 1)
+			{
+				if (strlen(buf) > 6)
+				{
+					unsigned int iaddr = hostin_addr(buf);
+					if (iaddr !=0) {
+#ifdef ALLDOMAINS
+						backinaddr.s_addr = iaddr;
+					} else {
+						syslog (LOG_ERR, "BackSMTPServer incorrect %s", buf);
+						exit(EX_OSERR);
+					}
+#else
+						curbackinaddr.s_addr = iaddr;
+					} else {
+						syslog (LOG_ERR, "BackSMTPServer incorrect %s", buf);
+						exit(EX_OSERR);
+					}
+#endif /* ALLDOMAINS */
 					syslog (LOG_DEBUG, "BackSMTPServer %s", buf);
 				}
 			}
@@ -1106,6 +1239,14 @@ int back_readconf(const char* conf)
 				if (strlen(buf) > 3)
 				{
 					domadd = (struct doment *)malloc(sizeof(struct doment));
+#ifndef ALLDOMAINS
+					if (curbackinaddr.s_addr == 0)
+					{
+						syslog (LOG_ERR, "BackSMTPServer should be defined before BackAddrDomain");
+						exit(EX_OSERR);
+					}
+					domadd->backinaddr.s_addr = curbackinaddr.s_addr;
+#endif /* ALLDOMAINS */
 					if ((domadd->domain = strdup(buf)) == NULL)
 					{
 						return 1;
@@ -1114,7 +1255,7 @@ int back_readconf(const char* conf)
 					syslog (LOG_DEBUG, "BackAddrDomain %s", buf);
 				}
 			}
-#endif
+#endif /* USEMAILERTABLE */
 			else if (sscanf( line, "BackSMTPPort:%5[0-9]", buf) == 1)
 			{
 				int num;
@@ -1139,6 +1280,59 @@ int back_readconf(const char* conf)
 				{
 					backlisttxt = strdup(buf);
 					syslog (LOG_DEBUG, "BackList %s", buf);
+				}
+			}
+			else if (sscanf( line, "TimeoutSMTPConnect:%4[0-9]", buf) == 1)
+			{
+				int num;
+
+				num = atoi(buf);
+				if (num > 0)
+				{
+					syslog (LOG_DEBUG, "TimeoutSMTPConnect set to %d seconds", num);
+					timeoutconnect = num * 1000;
+				}
+			}
+			else if (sscanf( line, "TimeoutSMTPReply:%5[0-9]", buf) == 1)
+			{
+				int num;
+
+				num = atoi(buf);
+				if (num > 0)
+					timeoutreply = num;
+
+				syslog (LOG_DEBUG, "TimeoutSMTPReply set to %d seconds", timeoutreply);
+			}
+			else if (sscanf( line, "BackSkipVerify:%u.%u.%u.%u/%u", &ip1, &ip2, &ip3, &ip4, &ipm) == 5)
+			{
+				snprintf( buf, sizeof(buf), "%u.%u.%u.%u", ip1, ip2, ip3, ip4);
+				entcidr = (struct CIDR *)malloc(sizeof(struct CIDR));
+				entcidr->ip = inet_addr(buf);
+				entcidr->masklen = ipm;
+				SLIST_INSERT_HEAD(&backcidr, entcidr, cidrs);
+				syslog (LOG_DEBUG, "BackSkipVerify set %s/%d", buf, ipm);
+			}
+			else if (sscanf( line, "BackSkipVerify:%u.%u.%u.%u", &ip1, &ip2, &ip3, &ip4) == 4)
+			{
+				snprintf( buf, sizeof(buf), "%u.%u.%u.%u", ip1, ip2, ip3, ip4);
+				entcidr = (struct CIDR *)malloc(sizeof(struct CIDR));
+				entcidr->ip = inet_addr(buf);
+				entcidr->masklen = 32;
+				SLIST_INSERT_HEAD(&backcidr, entcidr, cidrs);
+				syslog (LOG_DEBUG, "BackSkipVerify set %s", buf);
+			}
+			else if (sscanf( line, "BackSkipDaemon:%256[A-Za-z0-9-.]", buf) == 1)
+			{
+				if (strlen(buf) > 0)
+				{
+					struct entry *daemonadd;
+					daemonadd = (struct entry *)malloc(sizeof(struct entry));
+					if ((daemonadd->c = strdup(buf)) == NULL)
+					{
+						return 1;
+					}
+					SLIST_INSERT_HEAD(&daemonlist, daemonadd, entries);
+					syslog (LOG_DEBUG, "BackSkipDaemon %s", buf);
 				}
 			}
 		}
@@ -1167,6 +1361,7 @@ main(int argc, char *argv[])
 	gid_t gid = 0;
 	char *conf = NULL;
 	char *pidfile =NULL;
+	struct CIDR *entcidr;
 
 	/* already a daemon */
 	if(getppid()==1)
@@ -1325,6 +1520,8 @@ main(int argc, char *argv[])
 	}
 
 	SLIST_INIT( &domlist);
+	SLIST_INIT( &backcidr);
+	SLIST_INIT( &daemonlist);
 
 	if (conf == NULL)
 		conf = strdup(SCAMCONF);
@@ -1332,16 +1529,40 @@ main(int argc, char *argv[])
 	back_readconf(conf);
 	free(conf);
 
+	entcidr = (struct CIDR *)malloc(sizeof(struct CIDR));
+	entcidr->ip = inet_addr("127.0.0.1");
+	entcidr->masklen = 32;
+	SLIST_INSERT_HEAD(&backcidr, entcidr, cidrs);
+	syslog (LOG_DEBUG, "BackSkipVerify set 127.0.0.1");
+
+	if (SLIST_EMPTY(&daemonlist))
+	{
+		struct entry *daemonadd;
+		daemonadd = (struct entry *)malloc(sizeof(struct entry));
+		if ((daemonadd->c = strdup("MSA")) == NULL)
+		{
+			exit(EX_OSERR);
+		}
+		SLIST_INSERT_HEAD(&daemonlist, daemonadd, entries);
+		syslog (LOG_DEBUG, "BackSkipDaemon MSA");
+	}
+
+
 #ifdef USEMAILERTABLE
+	if (mailertable == NULL)
+		mailertable = strdup(DEFMAILERTABLE);
 	read_mailertable();
+
+	free(mailertable);
 #endif
 
-	if (backsmtpserver == NULL)
+#ifdef ALLDOMAINS
+	if (backinaddr.s_addr == 0)
 	{
 		syslog (LOG_ERR, "BackSMTPServer not defined");
 		exit(EX_OSERR);
 	}
-#ifndef ALLDOMAINS
+#else
 	if (SLIST_EMPTY(&domlist))
 	{
 		syslog (LOG_ERR, "BackAddrDomain not defined");
@@ -1355,6 +1576,13 @@ main(int argc, char *argv[])
 		syslog(LOG_ERR,  "pthread_rwlock_init failed: %s", strerror(ret));
 		exit(EX_OSERR);
 	}
+
+	if ((ret = pthread_rwlock_init(&skipvrfy_lock, NULL)) != 0)
+	{
+		syslog(LOG_ERR,  "pthread_rwlock_init failed: %s", strerror(ret));
+		exit(EX_OSERR);
+	}
+
 	loadbacklist();
 
 	if (pidfile == NULL)
@@ -1376,3 +1604,4 @@ main(int argc, char *argv[])
 	syslog (LOG_INFO, "Exit");
 	return(ret);
 }
+
