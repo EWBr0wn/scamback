@@ -66,7 +66,7 @@ Copyright © 2006-2008 Eland Systems All Rights Reserved.
 #define RCPTREJTEXT " User unknown"
 #define TEMPFAILTEXT "Internal error"
 
-#define VERSION "1.3.2"
+#define VERSION "1.3.3"
 
 #ifndef MAXHOSTNAMELEN
 #define MAXHOSTNAMELEN 256
@@ -259,10 +259,11 @@ savebacklist()
 		backnext = TAILQ_NEXT(bent, backentries);
 
 		snprintf( line, 511, "%u %s\n", bent->resp, bent->rcptaddr);
-		if (fputs(line, fh) != 0)
+		if (fputs(line, fh) == EOF)
 		{
 			UNLOCK(back_lock);
 			fclose(fh);
+			syslog (LOG_ERR, "writing cache error %d", errno);
 			return 1;
 		}
 	}
@@ -1124,7 +1125,7 @@ int back_readconf(const char* conf)
 
 				syslog (LOG_DEBUG, "BackSMTPPort set to %d", backsmtpport);
 			}
-			else if (sscanf( line, "BackAddrSubdomains=%3[a-zA-Z]", buf) == 1)
+			else if (sscanf( line, "BackAddrSubdomains:%3[a-zA-Z]", buf) == 1)
 			{
 				if (strcasecmp("yes", buf) == 0)
 				{
@@ -1375,4 +1376,3 @@ main(int argc, char *argv[])
 	syslog (LOG_INFO, "Exit");
 	return(ret);
 }
-

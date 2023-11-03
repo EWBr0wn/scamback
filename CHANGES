@@ -1,5 +1,13 @@
 scam-backscatter milter Changes
 
+Version 1.3.3 February 29, 2008
+
+Fix BackAddrSubdomains.   Problem reported by Scott Holltz
+of the University of Minnesota
+Fix bug saving cache. Patch submitted by Scott Holltz
+of the University of Minnesota
+Fix SMTP timeouts.  Problem reported by Jacob Goerlich
+
 Version 1.3.2 January 10, 2008
 
 Fix BackAddrDomain not required for ALLDOMAINS
@@ -55,5 +63,5 @@ Official public open source release
 
 http://www.elandsys.com/scam/
 scam-backscatter
-Copyright © 2006 - 2007 Eland Systems All Rights Reserved.
+Copyright © 2006 - 2008 Eland Systems All Rights Reserved.
 

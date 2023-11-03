@@ -1,5 +1,5 @@
 /*
-Copyright © 2004-2007 Eland Systems All Rights Reserved.
+Copyright © 2004-2008 Eland Systems All Rights Reserved.
 
    1. Redistribution and use in source and binary forms must retain the above
    copyright notice, this list of conditions and the following disclaimer.
@@ -153,10 +153,10 @@ clientread(int sockfd, char** buffer, size_t buffersize, unsigned int timeout )
 	if (sockfd < 0)
 		return -1;
 
-	FD_ZERO (&readfd);
-	FD_SET (sockfd, &readfd);
-
 	do {
+		FD_ZERO (&readfd);
+		FD_SET (sockfd, &readfd);
+
 		ret = select (sockfd + 1, &readfd, NULL, NULL, &interval);
 
 		switch(ret)
@@ -193,6 +193,8 @@ clientread(int sockfd, char** buffer, size_t buffersize, unsigned int timeout )
 					if (ret > 0)
 					{
 						readbytes += ret;
+						interval.tv_sec = 0;
+						interval.tv_usec = 100;
 					}
 					else if (ret < 0)
 					{
