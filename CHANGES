@@ -1,5 +1,15 @@
 scam-backscatter milter Changes
 
+Version 1.2.2 July 25, 2007
+
+Add EHLO compilation switch
+Add USEMAILERTABLE compilation switch
+Add BackAddrSubdomains
+Fix Parsing rfc822domain from right to left.  Patch submitted by Scott Holltz
+of the University of Minnesota
+Fix check_dom verifies subdomains as well.  Patch submitted by Scott Holltz
+of the University of Minnesota
+
 Version 1.2.1 April 24, 2007
 Fix typo in BackSMTPPort setting
 

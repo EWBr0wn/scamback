@@ -25,6 +25,7 @@ Copyright © 2006-2007 Eland Systems All Rights Reserved.
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/param.h>
 #include <fcntl.h>
 #include <sysexits.h>
 #include <unistd.h>
@@ -63,8 +64,17 @@ Copyright © 2006-2007 Eland Systems All Rights Reserved.
 #define LINELENGTH 1024
 #define SCAMCONF "/etc/mail/scam.conf"
 #define RCPTREJTEXT " User unknown"
+#define TEMPFAILTEXT "Internal error"
 
-#define VERSION "1.2.1"
+#define VERSION "1.2.2"
+
+#ifndef MAXHOSTNAMELEN
+#define MAXHOSTNAMELEN 256
+#endif
+
+#ifdef USEMAILERTABLE
+#define MAILERTABLE "/etc/mail/mailertable"
+#endif
 
 struct backent {
 	char	*rcptaddr;
@@ -89,7 +99,8 @@ static int backvaexp = 86400;
 static int backinexp = 3000;
 char *backsmtpserver = NULL;
 static int backsmtpport = 25;
-char hostname[256];
+static int addrsubdomain = 0;
+char hostname[MAXHOSTNAMELEN+1];
 
 struct mlfiPriv {
 	int	sockfd;
@@ -185,7 +196,7 @@ backerr(SMFICTX *ctx)
 
 	close(priv->sockfd);
 	priv->sockfd = -2;
-	smfi_setreply( ctx, "450", "4.7.0", "Internal error");
+	smfi_setreply( ctx, "450", "4.7.0", TEMPFAILTEXT);
 
 	return 0;
 }
@@ -235,7 +246,11 @@ smtpopen(SMFICTX *ctx)
 		return 1;
 	}
 
+#ifdef EHLO
+	snprintf( buffer, 1024, "EHLO %s\r\n", hostname);
+#else
 	snprintf( buffer, 1024, "HELO %s\r\n", hostname);
+#endif
 	lenbuf = strlen(buffer);
 	rc = clientwrite( priv->sockfd, buffer, lenbuf);
 
@@ -389,18 +404,65 @@ check_dom(const char* domname)
 {
 	int ret = 0;
 	struct doment *entre;
+	char *domainp = NULL;
+	int cmp;
+	char *domnameLC = NULL;
+	char *cp = NULL;
+	char *entredomainLC = NULL;
 
-	if (strlen(domname) < 1)
-		return 0;
+	if ( strlen( domname ) < 1 )
+		return ret;
 
-	SLIST_FOREACH(entre, &domlist, domentries)
+	domnameLC = strdup( domname );
+	if ( domnameLC == NULL )
+		return ( ret );
+
+	for ( cp = domnameLC; *cp; ++cp )
+		*cp = tolower( *cp );
+
+	SLIST_FOREACH( entre, &domlist, domentries )
 	{
-		if (strcasecmp(domname, entre->domain) == 0)
+		if (entredomainLC != NULL)
+			free(entredomainLC);
+
+		entredomainLC = strdup( entre->domain );
+		if ( entredomainLC == NULL )
+		{
+			free( domnameLC );
+			return ret;
+		}
+
+		for ( cp = entredomainLC; *cp; ++cp )
+			*cp = tolower( *cp );
+
+		cmp = strcmp( domnameLC, entredomainLC );
+
+		if ( cmp == 0 )
 		{
 			ret = 1;
 			break;
 		}
+
+		if ((addrsubdomain == 1) && (cmp > 0))
+		{
+			domainp = strstr( domnameLC, entredomainLC );
+
+			if ( domainp == NULL )
+				continue;
+
+			cmp = strcmp( domainp, entredomainLC );
+
+			if (( cmp == 0) && (domainp != domnameLC) && (*(domainp - 1) == '.' ))
+			{
+				ret = 1;
+				break;
+			}
+		}
 	}
+
+	free( domnameLC );
+	if (entredomainLC != NULL)
+		free( entredomainLC );
 
 	return ret;
 }
@@ -702,6 +764,63 @@ daemonize(char *pidfile)
 
 }
 
+#ifdef USEMAILERTABLE
+int
+read_mailertable()
+{
+	FILE *fh;
+	struct doment *domadd;
+	char line[LINELENGTH + 1];
+	char buf[LINELENGTH + 1];
+	int first = 0;
+	char *token;
+
+	if ((fh = fopen( MAILERTABLE, "r")) == NULL) {
+		return 1;
+	}
+
+	syslog (LOG_INFO, "reading mailertable");
+
+	while( fgets(line, LINELENGTH, fh) )
+	{
+		if (line[0] == '#')
+			continue;
+
+		if ((strlen(line) > 3) && (sscanf( line, "%256[A-Za-z0-9-.]", buf) == 1))
+		{
+			domadd = (struct doment *)malloc(sizeof(struct doment));
+			if ((domadd->domain = strdup(buf)) == NULL)
+			{
+				fclose(fh);
+				return 1;
+			}
+			SLIST_INSERT_HEAD(&domlist, domadd, domentries);
+			syslog (LOG_DEBUG, "BackAddrDomain %s", buf);
+			if (first == 0)
+			{
+				first = 1;
+				token = strtok(line, "[");
+				if (token != NULL)
+				{
+					token = strtok(NULL, "[");
+					if (token != NULL)
+					{
+						if (sscanf( token, "%256[0-9.]", buf) == 1)
+						{
+							backsmtpserver = strdup(buf);
+							syslog (LOG_DEBUG, "BackSMTPServer %s", buf);
+						}
+					}
+				}
+			}
+		}
+	}
+	fclose(fh);
+
+	return 0;
+}
+#endif /* USEMAILERTABLE */
+
 int back_readconf(const char* conf)
 {
 	FILE *fh;
@@ -710,7 +829,9 @@ int back_readconf(const char* conf)
 
 	int lline;
 	int lineno = 0;
+#ifndef USEMAILERTABLE
 	struct doment *domadd;
+#endif
 
 	if ((fh = fopen( conf, "r")) == NULL)
 	{
@@ -726,7 +847,7 @@ int back_readconf(const char* conf)
 		lline = strlen(line);
 		if (lline > 16)
 		{
-			if (sscanf( line, "backvalidaddrexp:%7[0-9]", buf) == 1)
+			if (sscanf( line, "BackValidAddrExp:%7[0-9]", buf) == 1)
 			{
 				int num;
 
@@ -735,7 +856,7 @@ int back_readconf(const char* conf)
 					backvaexp = num;
 
 				syslog (LOG_DEBUG, "BackValidAddrExp set to %d seconds", backvaexp);
-			} else if (sscanf( line, "backinvalidaddrexp:%7[0-9]", buf) == 1)
+			} else if (sscanf( line, "BackInvalidAddrExp:%7[0-9]", buf) == 1)
 			{
 				int num;
 
@@ -744,7 +865,9 @@ int back_readconf(const char* conf)
 					backinexp = num;
 
 				syslog (LOG_DEBUG, "BackInvalidAddrExp set to %d seconds", backinexp);
-			} else if (sscanf( line, "BackSMTPServer:%16[0-9-.]", buf) == 1)
+			}
+#ifndef USEMAILERTABLE
+			else if (sscanf( line, "BackSMTPServer:%16[0-9-.]", buf) == 1)
 			{
 				if (strlen(buf) > 6)
 				{
@@ -764,7 +887,9 @@ int back_readconf(const char* conf)
 					SLIST_INSERT_HEAD(&domlist, domadd, domentries);
 					syslog (LOG_DEBUG, "BackAddrDomain %s", buf);
 				}
-			} else if (sscanf( line, "BackSMTPPort:%5[0-9]", buf) == 1)
+			}
+#endif
+			else if (sscanf( line, "BackSMTPPort:%5[0-9]", buf) == 1)
 			{
 				int num;
 
@@ -773,6 +898,14 @@ int back_readconf(const char* conf)
 					backsmtpport = num;
 
 				syslog (LOG_DEBUG, "BackSMTPPort set to %d", backsmtpport);
+			}
+			else if (sscanf( line, "BackAddrSubdomains=%3[a-zA-Z]", buf) == 1)
+			{
+				if (strcasecmp("yes", buf) == 0)
+				{
+					addrsubdomain = 1;
+					syslog (LOG_DEBUG, "BackAddrSubdomains %s", buf);
+				}
 			}
 		}
 	}
@@ -857,6 +990,7 @@ main(int argc, char *argv[])
 					uid = passwd->pw_uid;
 					gid = passwd->pw_gid;
 				}
+				(void) endpwent();
 				break;
 
 			case 'g':
@@ -870,6 +1004,7 @@ main(int argc, char *argv[])
 				{
 					gid = grp->gr_gid;
 				}
+				(void) endgrent();
 				break;
 
 			case 'f':
@@ -932,7 +1067,13 @@ main(int argc, char *argv[])
 	}
 
 	memset(hostname, '\0', sizeof hostname);
-	(void) gethostname(hostname, sizeof hostname);
+	if (gethostname(hostname, sizeof hostname) != 0)
+	{
+		fprintf(stderr, "gethostname failed\n");
+		syslog (LOG_ERR, "gethostname failed");
+		exit(EX_UNAVAILABLE);
+	}
+
 	SLIST_INIT( &domlist);
 
 	if (conf == NULL)
@@ -940,6 +1081,10 @@ main(int argc, char *argv[])
 
 	back_readconf(conf);
 	free(conf);
+
+#ifdef USEMAILERTABLE
+	read_mailertable();
+#endif
 
 	if (backsmtpserver == NULL)
 	{

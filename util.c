@@ -24,17 +24,24 @@ Copyright © 2004-2007 Eland Systems All Rights Reserved.
 
 #include "util.h"
 
-char* rfc822domain(char* rfc822addr) {
+char* rfc822domain( char* rfc822addr )
+{
 	char *p = rfc822addr;
+	char *q;
+	int k;
 
+	k = strlen( p );
 
-	while (*p) {
-		if (*p == '@')
+	if ( k >= 1 )
+	{
+		for ( q = p + k - 1; q != p; --q )
 		{
-			p++;
-			break;
+			if ( *(q - 1) == '@' )
+			{
+				p = q;
+				break;
+			}
 		}
-		p++;
 	}
 
 	return p;

@@ -31,8 +31,7 @@ INSTALL
 2.  Generate a new sendmail configuration (sendmail.cf) with the following
     additional settings:
 
-	  define(`confPRIVACY_FLAGS', `needmailhelo')dnl
-      INPUT_MAIL_FILTER(`scam-grey', `S=unix:/var/spool/scam/scam-back.sock, F=T, T=S:240s;R:240s;E:5m')dnl
+      INPUT_MAIL_FILTER(`scam-back', `S=unix:/var/spool/scam/scam-back.sock, F=T, T=S:240s;R:240s;E:5m')dnl
 
 3.  Create a user (scamback for example) which will be used to run the milter
 
@@ -64,8 +63,32 @@ IP address of the internal mail server in /etc/mail/scam.conf file as follows:
 BackAddrDomain:example.net
 BackSMTPServer:192.168.0.2
 
+The following entry is optional. It should be used if the backend mail server
+is running on a non-standard port. Scam-backscatter will use tcp port 25 by
+default.
+
+BackSMTPPort:25
+
+Once scam-backscatter verification finds a valid email addresses, it gets
+cached.  The default expiry value is 86400 seconds.
+
+BackValidAddrExp:86400
+
+Invalid email addresses are also cached by scam-backscatter.  The default
+expiry value is 3000 seconds.
+
+BackInvalidAddrExp:3000
+
+When BackAddrSubdomain is set to yes, scam-backscatter will verify
+subdomain email addresses (user@mail.example.net) as well if
+example.net is listed as a domain to be verified.  This default value is no.
+
+BackAddrSubdomains:Yes
+
 Your users can bypass the backscatter check by relaying through your
 server using port 587 instead of port 25.
+
+Scam-backscatter does not perform verification for locally submitted mail.
 
 If you are using multiple backend SMTP servers, use multiple instances of
 Scam-backscatter milter as follows:
@@ -78,6 +101,18 @@ Second instance:
 
 scam-back -p unix:/var/spool/scam/scam-back2.sock -u scamback \
 -f /etc/mail/scam2.conf -P /var/spool/scam/scam-back2.pid -D
+
+FEATURES
+
+These compile time options can be enabled by appending
+a -Dfeature_name to the CCFLAGS line of the Makefile.
+
+EHLO Use EHLO instead of HELO when verifying against backend.
+
+USEMAILERTABLE Reads the list of domains to verify and the backend SMTP
+server IP address from sendmail's mailertable file.
+
+example.com            SMTP:[192.0.2.1]
 
 http://www.elandsys.com/scam/
 scam-backscatter
