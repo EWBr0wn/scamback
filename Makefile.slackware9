@@ -1,6 +1,6 @@
 PROG = scam-back
 CC = cc
-CCFLAGS = -O2 -D_REENTRANT -DLINUX -D_XOPEN_SOURCE=600 -D_BSD_SOURCE
+CCFLAGS += -O2 -D_REENTRANT -DLINUX -D_XOPEN_SOURCE=600 -D_BSD_SOURCE
 CFLAGS = -I/usr/local/include
 LDFLAGS =  -L/usr/local/lib
 LIBS = -lmilter -lresolv -pthread

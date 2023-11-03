@@ -23,7 +23,11 @@ source code was extracted.
 
 4.  Type make and press Enter to compile scam-backscatter
 
-Note: If you are using OpenBSD 4.2, edit the Makefile by remove the "-lresolv" from the LIBS line.
+You can enable extra features by editing the Makefile or by using the following example:
+
+   CCFLAGS="-DUSEMAILERTABLE" make
+
+Note: If you are using OpenBSD 4.2 or later, edit the Makefile by remove the "-lresolv" from the LIBS line.
 
 INSTALL
 
@@ -47,9 +51,9 @@ INSTALL
 Alternately, you can use a TCP socket for the milter by using the following for
 step 2:
 
-	INPUT_MAIL_FILTER(`scam-back', `S=inet@8900@localhost, F=T, T=S:240s;R:240s;E:5m')dnl
+	INPUT_MAIL_FILTER(`scam-back', `S=inet:8900@localhost, F=T, T=S:240s;R:240s;E:5m')dnl
 
-Start the milter with the -p inet@8900@localhost parameter.
+Start the milter with the -p inet:8900@localhost parameter.
 
 START UP
 
@@ -149,6 +153,11 @@ BackSkipVerify:192.0.2.2
 BackSkipVerify:192.0.2.32/28
 
 Scam-backscatter does not perform verification for locally submitted mail.
+
+BackErrorTempfail:No
+By default, Scam-backscatter does not return a temporary failure if the
+Backend SMTP server cannot be reached.  Setting BackErrorTempfail to
+Yes will return a temporary failure.
 
 The Mailertable setting provides the path to the mailertable file.  The
 default value is /etc/mail/mailertable if the setting is undefined.

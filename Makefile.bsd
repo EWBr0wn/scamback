@@ -1,6 +1,6 @@
 PROG = scam-back
 CC = cc
-CCFLAGS = -O2 -D_REENTRANT
+CCFLAGS += -O2 -D_REENTRANT
 CFLAGS = -I/usr/local/include/
 LDFLAGS =  -L/usr/local/lib
 LIBS = -lmilter -lresolv -pthread

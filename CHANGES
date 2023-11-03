@@ -1,5 +1,14 @@
 scam-backscatter milter Changes
 
+Version 1.4.1 September 19, 2008
+
+Add CCFLAGS
+Add BackErrorTempfail.
+Fix Subdomains check was incorrect.  Patch by Birger Krägelin
+Fix inet example in documentation is incorrect.  Problem reported by
+Alexandre Ghisoli
+Fix Makefile.linux.  Patch submitted by Alexandre Ghisoli
+
 Version 1.4 May 29, 2008
 
 Add Mapping of BackAddrDomain to SMTP backend with USEMAILERTABLE

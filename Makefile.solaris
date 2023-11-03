@@ -1,6 +1,6 @@
 PROG = scam-back
 CC = cc
-CCFLAGS = -O2 -D_REENTRANT -DSOLARIS
+CCFLAGS += -O2 -D_REENTRANT -DSOLARIS
 CFLAGS = -I/usr/local/include/
 LDFLAGS =  -L/usr/local/lib
 LIBS = -lmilter -lresolv -lsocket -lnsl -lpthread

@@ -67,7 +67,7 @@ Copyright © 2006-2008 Eland Systems All Rights Reserved.
 #define RCPTREJTEXT " User unknown"
 #define TEMPFAILTEXT "Internal error"
 
-#define VERSION "1.4"
+#define VERSION "1.4.1"
 
 #ifndef MAXHOSTNAMELEN
 #define MAXHOSTNAMELEN 256
@@ -127,6 +127,7 @@ struct in_addr backinaddr;
 #endif
 static int backsmtpport = 25;
 static int addrsubdomain = 0;
+static int backerrfail = 0;
 static unsigned int smtpwait = 0;
 static unsigned int timeoutconnect = 1500;
 static unsigned int timeoutreply = 3;
@@ -648,7 +649,7 @@ check_dom(const char* domname)
 			break;
 		}
 
-		if ((addrsubdomain == 1) && (cmp > 0))
+		if ((addrsubdomain == 1) && (cmp != 0))
 		{
 			domainp = strstr( domnameLC, entredomainLC );
 
@@ -808,7 +809,15 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 		if (priv->sockfd == -2)
 		{
 			if (smtpopen(ctx) != 0)
-				return SMFIS_CONTINUE;
+			{
+				if (backerrfail == 0)
+				{
+					return SMFIS_CONTINUE;
+				} else {
+					smfi_setreply( ctx, "451", "4.7.0", TEMPFAILTEXT);
+					return SMFIS_TEMPFAIL;
+				}
+			}
 		}
 
 		if (priv->sockfd >= 0)
@@ -1272,6 +1281,14 @@ int back_readconf(const char* conf)
 				{
 					addrsubdomain = 1;
 					syslog (LOG_DEBUG, "BackAddrSubdomains %s", buf);
+				}
+			}
+			else if (sscanf( line, "BackErrorTempfail:%3[a-zA-Z]", buf) == 1)
+			{
+				if (strcasecmp("yes", buf) == 0)
+				{
+					backerrfail = 1;
+					syslog (LOG_DEBUG, "BackErrorTempfail %s", buf);
 				}
 			}
 			else if (sscanf( line, "BackList:%255[^\n]", buf) == 1)
