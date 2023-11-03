@@ -223,6 +223,13 @@ The BackAddrDomain setting is not required.
 
 VERBOSE Logs the output of the SMTP session with the backend
 
+FALLBACKEND Support for two SMTP backends per domain.  This feature
+should only be enabled with the USEMAILERTABLE feature.
+
+example.net             ESMTP:[mail.example.net]:[mail2.example.net]
+
+HELOHOST Sets the hostname used for HELO/EHLO during compilation.
+
 TROUBLESHOOTING
 
 The syslog facility is used to log information to maillog.  If you experience
@@ -267,6 +274,11 @@ Verify whether your sendmail configuration (mc) file has this definition:
 
   define(`confMILTER_MACROS_ENVRCPT', `{rcpt_mailer}, {rcpt_host}, {rcpt_addr}') dnl
 
+If Scam-backscatter cannot connect to the backend, the following message
+
+  cannot connect to backend SMTP at 192.0.2.1 status Connection refused
+
+is logged.  See errno in your system manual for more information.
 
 Refer to http://www.elandsys.com/resources/sendmail/milter.html for more
 information about libmilter.

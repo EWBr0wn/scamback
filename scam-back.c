@@ -66,7 +66,7 @@ Copyright © 2006-2009 Eland Systems All Rights Reserved.
 #define RCPTREJTEXT " User unknown"
 #define TEMPFAILTEXT "Internal error"
 
-#define VERSION "1.4.2"
+#define VERSION "1.4.3"
 
 #ifndef MAXHOSTNAMELEN
 #define MAXHOSTNAMELEN 256
@@ -96,6 +96,9 @@ struct doment {
 	char	*domain;
 #ifndef ALLDOMAINS
 	struct in_addr backinaddr;
+#ifdef FALLBACKEND
+	struct in_addr backinadd2;
+#endif
 	int backsmtpport;
 #endif
 	SLIST_ENTRY(doment)	domentries;
@@ -120,6 +123,9 @@ SLIST_HEAD(, entry) daemonlist;
 
 struct domconn {
 	struct in_addr addr;
+#ifdef FALLBACKEND
+	struct in_addr add2;
+#endif
 	int backsmtpport;
 };
 
@@ -145,6 +151,9 @@ char *mailertable = NULL;
 struct mlfiPriv {
 	int	sockfd;
 	struct in_addr backinaddr;
+#ifdef FALLBACKEND
+	struct in_addr backinadd2;
+#endif
 	int backsmtpport;
 #ifdef BITBUCKET
 	SLIST_HEAD(, entry)	brcpt;
@@ -293,7 +302,7 @@ savebacklist()
 		{
 			UNLOCK(back_lock);
 			fclose(fh);
-			syslog (LOG_ERR, "writing cache error %d", errno);
+			syslog (LOG_ERR, "writing cache error %s", strerror(errno));
 			return 1;
 		}
 	}
@@ -310,7 +319,7 @@ sockclose(SMFICTX *ctx)
 
 	if (priv->sockfd >= 0)
 		if (close(priv->sockfd) != 0)
-			syslog (LOG_ERR, "socket close error %d", errno);
+			syslog (LOG_ERR, "socket close error %s", strerror(errno));
 
 	priv->sockfd = -2;
 
@@ -324,7 +333,7 @@ backerr(SMFICTX *ctx)
 
 	if (priv->sockfd >= 0)
 		if (close(priv->sockfd) != 0)
-			syslog (LOG_ERR, "close fd error %d", errno);
+			syslog (LOG_ERR, "close fd error %s", strerror(errno));
 
 	priv->sockfd = -2;
 	smfi_setreply( ctx, "451", "4.7.0", TEMPFAILTEXT);
@@ -350,15 +359,36 @@ smtpopen(SMFICTX *ctx)
 #else
 	rc = clientconn( priv->sockfd, priv->backinaddr, priv->backsmtpport, timeoutconnect);
 #endif /* ALLDOMAINS */
-	if ((rc != 2) && ( 0 != rc))
+	if ( 0 != rc)
 	{
 		sockclose(ctx);
 #ifdef ALLDOMAINS
-		syslog (LOG_WARNING, "cannot connect to backend SMTP at %s", inet_ntoa(backinaddr));
+		syslog (LOG_WARNING, "cannot connect to backend SMTP at %s status %s", inet_ntoa(backinaddr), strerror(errno));
 #else
-		syslog (LOG_WARNING, "cannot connect to backend SMTP at %s", inet_ntoa(priv->backinaddr));
-#endif /* ALLDOMAINS */
+		syslog (LOG_WARNING, "cannot connect to backend SMTP at %s status %s", inet_ntoa(priv->backinaddr), strerror(errno));
+#ifdef FALLBACKEND
+	if (priv->backinadd2.s_addr != 0)
+	{
+		if ((priv->sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+		{
+			syslog (LOG_ERR, "cannot create socket");
+			return 1;
+		}
+
+		rc = clientconn( priv->sockfd, priv->backinadd2, priv->backsmtpport, timeoutconnect);
+		if ( 0 != rc)
+		{
+			sockclose(ctx);
+			syslog (LOG_WARNING, "cannot connect to backend SMTP at %s status %s", inet_ntoa(priv->backinadd2), strerror(errno));
+		}
 		return 1;
+	}
+
+#endif /* FALLBACKEND */
+#endif /* ALLDOMAINS */
+#ifndef FALLBACKEND
+		return 1;
+#endif
 	}
 #ifdef VERBOSE
 #ifdef ALLDOMAINS
@@ -390,6 +420,7 @@ smtpopen(SMFICTX *ctx)
 	}
 
 #ifdef VERBOSE
+	buffer[rc]= '\0';
 	syslog (LOG_DEBUG, "SMTP banner %s", buffer);
 #endif
 
@@ -417,7 +448,7 @@ smtpopen(SMFICTX *ctx)
 	lenbuf = strlen(buffer);
 	rc = clientwrite( priv->sockfd, buffer, lenbuf);
 
-	if ( 0 != rc)
+	if ( 0 > rc)
 	{
 		free(buffer);
 		backerr(ctx);
@@ -442,6 +473,7 @@ smtpopen(SMFICTX *ctx)
 		return 1;
 	}
 #ifdef VERBOSE
+	buffer[rc]= '\0';
 	syslog (LOG_DEBUG, "Helo response %s", buffer);
 #endif
 
@@ -469,7 +501,7 @@ smtpopen(SMFICTX *ctx)
 	lenbuf = strlen(buffer);
 	rc = clientwrite( priv->sockfd, buffer, lenbuf);
 
-	if ( 0 != rc)
+	if ( 0 > rc)
 	{
 		free(buffer);
 		backerr(ctx);
@@ -488,6 +520,7 @@ smtpopen(SMFICTX *ctx)
 	}
 
 #ifdef VERBOSE
+	buffer[rc]= '\0';
 	syslog (LOG_DEBUG, "MailFrom response %s", buffer);
 #endif
 
@@ -527,7 +560,7 @@ smtpclose(SMFICTX *ctx)
 	lenbuf = strlen(buffer);
 	rc = clientwrite( priv->sockfd, buffer, lenbuf);
 
-	if ( 0 != rc)
+	if ( 0 > rc)
 	{
 		free(buffer);
 		sockclose(ctx);
@@ -544,6 +577,7 @@ smtpclose(SMFICTX *ctx)
 	}
 
 #ifdef VERBOSE
+	buffer[rc]= '\0';
 	syslog (LOG_DEBUG, "Rset response %s", buffer);
 #endif
 	if ((*buffer != '2') || (*(buffer+1) != '5') || (*(buffer+2) != '0'))
@@ -564,7 +598,7 @@ smtpclose(SMFICTX *ctx)
 	lenbuf = strlen(buffer);
 	rc = clientwrite( priv->sockfd, buffer, lenbuf);
 
-	if ( 0 != rc)
+	if ( 0 > rc)
 	{
 		free(buffer);
 		shutdown(priv->sockfd, 2);
@@ -641,6 +675,9 @@ check_dom(const char* domname)
 	char *entredomainLC = NULL;
 
 	conninfo.addr.s_addr = 0;
+#ifdef FALLBACKEND
+	conninfo.add2.s_addr = 0;
+#endif
 	conninfo.backsmtpport = DEFSMTPPORT;
 
 	if ( strlen( domname ) < 1 )
@@ -673,6 +710,9 @@ check_dom(const char* domname)
 		if ( cmp == 0 )
 		{
 			conninfo.addr = entre->backinaddr;
+#ifdef FALLBACKEND
+			conninfo.add2 = entre->backinadd2;
+#endif
 			conninfo.backsmtpport = entre->backsmtpport;
 			break;
 		}
@@ -689,6 +729,9 @@ check_dom(const char* domname)
 			if (( cmp == 0) && (domainp != domnameLC) && (*(domainp - 1) == '.' ))
 			{
 				conninfo.addr = entre->backinaddr;
+#ifdef FALLBACKEND
+				conninfo.add2 = entre->backinadd2;
+#endif
 				conninfo.backsmtpport = entre->backsmtpport;
 				break;
 			}
@@ -764,6 +807,9 @@ mlfi_envfrom(SMFICTX *ctx, char **argv)
 #endif
 #ifndef ALLDOMAINS
 	priv->backinaddr.s_addr = 0;
+#ifdef FALLBACKEND
+	priv->backinadd2.s_addr = 0;
+#endif
 #endif
 	return SMFIS_CONTINUE;
 }
@@ -800,6 +846,9 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 		struct domconn conninfo;
 		conninfo = check_dom( domain);
 		priv->backinaddr = conninfo.addr;
+#ifdef FALLBACKEND
+		priv->backinadd2 = conninfo.add2;
+#endif
 		priv->backsmtpport = conninfo.backsmtpport;
 	} else
 		return SMFIS_CONTINUE;
@@ -862,7 +911,7 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 			lenbuf = strlen(buffer);
 			rc = clientwrite( priv->sockfd, buffer, lenbuf);
 
-			if ( 0 != rc)
+			if ( 0 > rc)
 			{
 				free(buffer);
 				backerr(ctx);
@@ -984,6 +1033,9 @@ mlfi_cleanup(SMFICTX *ctx)
 #endif
 #ifndef ALLDOMAINS
 	priv->backinaddr.s_addr = 0;
+#ifdef FALLBACKEND
+	priv->backinadd2.s_addr = 0;
+#endif
 #endif
 	return 0;
 }
@@ -1051,6 +1103,9 @@ usage()
 #endif
 #ifdef ALLDOMAINS
 	fprintf(stdout, "           ALLDOMAINS\n");
+#endif
+#ifdef FALLBACKEND
+	fprintf(stdout, "           FALLBACKEND\n");
 #endif
     fprintf(stdout, "  usage: scam-back -p protocol:address [-u user] [-g group] [-T timeout]\n");
 	fprintf(stdout, "                                       [-f config] [-P pidfile] [-b path]\n");
@@ -1183,8 +1238,30 @@ read_mailertable()
 						if (iaddr != 0)
 						{
 							domadd->backinaddr.s_addr = iaddr;
-
+							domadd->backsmtpport = backsmtpport;
 							syslog (LOG_INFO, "BackSMTPServer %s", buf);
+
+#ifdef FALLBACKEND
+							token = strtok(NULL, "[");
+
+							if (token != NULL)
+							{
+								if (sscanf( token, "%256[A-Za-z0-9-.]", buf) == 1)
+								{
+									unsigned int iaddr = hostin_addr(buf);
+									if (iaddr != 0)
+									{
+										domadd->backinadd2.s_addr = iaddr;
+										domadd->backsmtpport = backsmtpport;
+										syslog (LOG_INFO, "BackSMTPServer %s", buf);
+									} else {
+										syslog (LOG_ERR, "BackSMTPServer %s does not resolve to an IP Address", buf);
+										fclose(fh);
+										return 1;
+									}
+								}
+							}
+#endif /* FALLBACKEND */
 							SLIST_INSERT_HEAD(&domlist, domadd, domentries);
 						} else {
 							syslog (LOG_ERR, "BackSMTPServer %s does not resolve to an IP Address", buf);
@@ -1583,6 +1660,7 @@ main(int argc, char *argv[])
 		exit(EX_UNAVAILABLE);
 	}
 #endif
+#ifndef HELOHOST
 	memset(hostname, '\0', sizeof hostname);
 	if (gethostname(hostname, sizeof hostname) != 0)
 	{
@@ -1590,6 +1668,9 @@ main(int argc, char *argv[])
 		syslog (LOG_ERR, "gethostname failed");
 		exit(EX_UNAVAILABLE);
 	}
+#else
+	snprintf( hostname, MAXHOSTNAMELEN, "%s", HELOHOST);
+#endif /* HELOHOST */
 
 	SLIST_INIT( &domlist);
 	SLIST_INIT( &backcidr);
