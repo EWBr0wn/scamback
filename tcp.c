@@ -1,5 +1,5 @@
 /*
-Copyright © 2004-2009 Eland Systems All Rights Reserved.
+Copyright © 2004-2010 Eland Systems All Rights Reserved.
 
    1. Redistribution and use in source and binary forms must retain the above
    copyright notice, this list of conditions and the following disclaimer.
@@ -80,22 +80,32 @@ waitpoll(int fd, int events, int timeout_msec)
 int
 waitconnect(int sockfd, int timeout_msec)
 {
-  fd_set *fds;
   struct timeval interval;
   int rc, fdsz, sval;
   socklen_t slen;
+#ifdef LINUX
+	fd_set fds;
+#else
+	 fd_set *fds;
+#endif
+
 
   interval.tv_sec = timeout_msec/1000;
   timeout_msec -= interval.tv_sec*1000;
 
   interval.tv_usec = timeout_msec*1000;
 
+#ifdef LINUX
+	FD_ZERO(&fds);
+	FD_SET(sockfd, &fds);
+	rc = select(sockfd+1, NULL, &fds, NULL, &interval);
+#else
   fdsz = howmany(sockfd+1, NFDBITS) * sizeof(fd_mask);
   fds = (fd_set *) malloc(fdsz);
   FD_ZERO(fds);
   FD_SET(sockfd, fds);
-
   rc = select(sockfd+1, NULL, fds, NULL, &interval);
+#endif
 
   switch (rc)
   {
@@ -111,23 +121,31 @@ waitconnect(int sockfd, int timeout_msec)
 	    slen = sizeof(sval);
 		if (getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &sval, &slen) == -1)
 		{
+#ifndef LINUX
 			free(fds );
+#endif
 			return -1;
 		}
 		if (sval != 0)
 		{
 			errno = sval;
+#ifndef LINUX
 			free(fds );
+#endif
 		    return -1;
 		}
 		return 0;
 
 		default:
 			/* any other condition */
+#ifndef LINUX
 			free(fds );
+#endif
 			return -1;
 	}
+#ifndef LINUX
   free(fds );
+#endif
   return 0;
 }
 
@@ -154,7 +172,11 @@ clientconn(int *sockfd, struct sockaddr_storage ss, short int port, unsigned int
 			return -3;
 	}
 
+#ifndef LINUX
 	len = ((struct sockaddr *)&ss)->sa_len;
+#else
+	len = sizeof(struct sockaddr_storage);
+#endif /* LINUX */
 
 	if ((*sockfd = socket( ss.ss_family, SOCK_STREAM, 0)) < 0)
 	{

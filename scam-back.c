@@ -1,5 +1,5 @@
 /*
-Copyright © 2006-2009 Eland Systems All Rights Reserved.
+Copyright © 2006-2010 Eland Systems All Rights Reserved.
 
    1. Redistribution and use in source and binary forms must retain the above
    copyright notice, this list of conditions and the following disclaimer.
@@ -68,7 +68,7 @@ Copyright © 2006-2009 Eland Systems All Rights Reserved.
 #define TEMPFAILTEXT "Internal error"
 #define MAILFROMUSER "postmaster+backscatter"
 
-#define VERSION "1.5.0"
+#define VERSION "1.5.1-pre2"
 
 #ifndef MAXHOSTNAMELEN
 #define MAXHOSTNAMELEN 256
@@ -422,6 +422,8 @@ smtpopen(SMFICTX *ctx)
 	struct mlfiPriv *priv = MLFIPRIV;
 	int rc;
 	char *buffer;
+	int backsslen = 0;
+	int backsslen2 = 0;
 
 #ifdef ALLDOMAINS
 	rc = clientconn( &(priv->sockfd), backss, backsmtpport, timeoutconnect);
@@ -433,6 +435,20 @@ smtpopen(SMFICTX *ctx)
 	if (rc == -3)
 		return 1;
 
+#ifndef LINUX
+#ifdef ALLDOMAINS
+	backsslen = backss.ss_len
+#else
+	backsslen  = priv->backss.ss_len;
+#ifdef FALLBACKEND
+	backsslen2  = priv->backss2.ss_len;
+#endif /* FALLBACKEND */
+#endif /* ALLDOMAINS */
+#else
+	backsslen = sizeof(struct sockaddr_storage);
+	backsslen2 = sizeof(struct sockaddr_storage);
+#endif /* LINUX */
+
 	if ( 0 != rc)
 	{
 		sockclose(ctx);
@@ -440,39 +456,40 @@ smtpopen(SMFICTX *ctx)
 			return 1;
 
 #ifdef ALLDOMAINS
-		if (getnameinfo((struct sockaddr *) &backss, backss.ss_len,  buffer, MAXHOSTNAMELEN, NULL, 0, NI_NUMERICHOST) == 0)
+		if (getnameinfo((struct sockaddr *) &backss, backsslen,  buffer, MAXHOSTNAMELEN, NULL, 0, NI_NUMERICHOST) == 0)
 			syslog (LOG_WARNING, "cannot connect to backend SMTP at %s status %s", buffer, strerror(errno));
 
 		free(buffer);
 #else
-		if (getnameinfo((struct sockaddr *) &priv->backss, priv->backss.ss_len,  buffer, MAXHOSTNAMELEN, NULL, 0, NI_NUMERICHOST) == 0)
+		if (getnameinfo((struct sockaddr *) &priv->backss, backsslen,  buffer, MAXHOSTNAMELEN, NULL, 0, NI_NUMERICHOST) == 0)
 			syslog (LOG_WARNING, "cannot connect to backend SMTP at %s status %s", buffer, strerror(errno));
 
 		free(buffer);
 #ifdef FALLBACKEND
-	if (priv->backsmtpport > 0)
-	{
-		rc = clientconn( &(priv->sockfd), priv->backss2, priv->backsmtpport2, timeoutconnect);
-
-		if (rc == -3)
-			return 1;
-
-		if ( 0 != rc)
+		if (priv->backsmtpport > 0)
 		{
-			sockclose(ctx);
-			if ((buffer = malloc(MAXHOSTNAMELEN)) == NULL)
+			rc = clientconn( &(priv->sockfd), priv->backss2, priv->backsmtpport2, timeoutconnect);
+
+			if (rc == -3)
 				return 1;
 
-			if (getnameinfo((struct sockaddr *) &priv->backss2, priv->backss2.ss_len,  buffer, MAXHOSTNAMELEN, NULL, 0, NI_NUMERICHOST) == 0)
-				syslog (LOG_WARNING, "cannot connect to backend SMTP at %s status %s", buffer, strerror(errno));
+			if ( 0 != rc)
+			{
+				sockclose(ctx);
+				if ((buffer = malloc(MAXHOSTNAMELEN)) == NULL)
+					return 1;
 
-			free(buffer);
+				if (getnameinfo((struct sockaddr *) &priv->backss2, backsslen2,  buffer, MAXHOSTNAMELEN, NULL, 0, NI_NUMERICHOST) == 0)
+					syslog (LOG_WARNING, "cannot connect to backend SMTP at %s status %s", buffer, strerror(errno));
+
+				free(buffer);
+			}
+			return 1;
 		}
-		return 1;
-	}
-
 #endif /* FALLBACKEND */
+
 #endif /* ALLDOMAINS */
+
 #ifndef FALLBACKEND
 		return 2;
 #endif
@@ -485,7 +502,7 @@ smtpopen(SMFICTX *ctx)
 			return 1;
 
 		/* port can be incorrect */
-		if (getnameinfo((struct sockaddr *) &priv->backss, priv->backss.ss_len,  buffer, MAXHOSTNAMELEN, NULL, 0, NI_NUMERICHOST) == 0)
+		if (getnameinfo((struct sockaddr *) &priv->backss, backsslen,  buffer, MAXHOSTNAMELEN, NULL, 0, NI_NUMERICHOST) == 0)
 			syslog (LOG_DEBUG, "Connected to backend SMTP at %s:%d\n", buffer, priv->backsmtpport);
 
 		free(buffer);
@@ -554,7 +571,7 @@ smtpopen(SMFICTX *ctx)
 		return 1;
 	}
 
-	snprintf( buffer, RECVBUFLEN, ":<%s@%s>\r\n", MAILFROMUSER, hostname);
+	snprintf( buffer, RECVBUFLEN, ":<%s@%s>", MAILFROMUSER, hostname);
 	rc = smtpcmd( priv->sockfd, "MAIL FROM", buffer, "250");
 	free(buffer);
 
@@ -836,7 +853,7 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 	} else
 		return SMFIS_CONTINUE;
 
-	if (priv->backss.ss_len > 0)
+	if (priv->backss.ss_family > 0)
 #endif
 	{
 		rc = lookupbacklist(rcptaddr);
@@ -1232,18 +1249,18 @@ read_mailertable(short int iprefer)
 			}
 			syslog (LOG_DEBUG, "BackAddrDomain %s", buf);
 
-			token = strtok(line, "[");
+			token = strtok(line, ":");
 			if (token != NULL)
 			{
 				token = strtok(NULL, "[");
 
 				if (token != NULL)
 				{
-					if (sscanf( token, "%256[A-Za-z0-9-.]", buf) == 1)
+					if (sscanf( token, "%256[A-Za-z0-9-.:]", buf) == 1)
 					{
 						struct sockaddr_storage ss;
 						int e = hostss(buf, &ss, iprefer);
-						if (e != 0)
+						if (e == 0)
 						{
 							memcpy(&domadd->backss, &ss, sizeof(ss));
 							domadd->backsmtpport = backsmtpport;
@@ -1258,7 +1275,7 @@ read_mailertable(short int iprefer)
 								{
 									struct sockaddr_storage ss;
 									int e = hostss(buf, &ss, iprefer);
-									if (e != 0)
+									if (e == 0)
 									{
 										memcpy(&domadd->backss2, &ss, sizeof(ss));
 										domadd->backsmtpport2 = backsmtpport;
@@ -1291,7 +1308,7 @@ read_mailertable(short int iprefer)
 int back_readconf(const char* conf)
 {
 	FILE *fh;
-	short int iprefer = 0;
+	short int iprefer = PF_UNSPEC;
 	int lline;
 	int lineno = 0;
 	int e = -10;

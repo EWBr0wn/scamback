@@ -134,6 +134,11 @@ BackList:/var/spool/scam/backscatter.txt
 The TimeoutSMTPconnect setting determines the time to wait (seconds)
 for a connection to the backend SMTP server.
 
+PreferIPVersion:4
+
+The PreferIPVersion setting determines IPv4 or IPv6 preference when
+resolving hostnames.  The setting is optional.
+
 TimeoutSMTPConnect:2
 
 The TimeoutSMTPReply setting determines the time to wait (seconds)
@@ -162,11 +167,13 @@ BackSkipVerify:192.0.2.32/28
 Scam-backscatter does not perform verification for locally submitted mail.
 
 BackErrorTempfail:No
+
 By default, Scam-backscatter does not return a temporary failure if the
 Backend SMTP server cannot be reached.  Setting BackErrorTempfail to
 Yes will return a temporary failure.
 
 BackSMTPBackoff:60
+
 The BackSMTPBackoff setting is used with the BACKOFF feature.  Connections
 to the backend SMTP will not be attempted within the backoff period starting
 from the time a connection could not be established.
@@ -215,6 +222,7 @@ server IP address from sendmail's mailertable file.
 
 example.com            SMTP:[192.0.2.1]
 example.org             ESMTP:[mail.example.org]
+example.net             ESMTP:[2001:db8:1:1::25]
 
 Only the first entry on the right-hand side will be read.
 
@@ -237,6 +245,8 @@ HELOHOST Sets the hostname used for HELO/EHLO during compilation.
 
 BACKOFF Enables a backoff of the SMTP connection to the SMTP backend
 if there isn't any SMTP service running.
+
+HAVEPOLL use poll() instead of select() for sockets.
 
 TROUBLESHOOTING
 

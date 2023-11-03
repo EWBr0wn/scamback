@@ -1,5 +1,18 @@
 scam-backscatter milter Changes
 
+Version 1.5.1 February 20, 2010
+Add PreferIPVersion
+Add HAVEPOLL
+Fix Incorrect logic in host resolution with USEMAILERTABLE.  Patch
+by Graeme Lee
+Fix getaddrinfo
+Fix select under Linux.  Patch by Tomi Leppikangas.
+Fix struct sockaddr_storage compilation error under Linux.  Patch by
+Tomi Leppikangas.
+Fix Remove extra CRLF on mail_from
+Fix Mailertable parsing.  Problem reported by Chris Picciotto.
+Add Makefile for OpenBSD
+
 Version 1.5.0 October 5, 2009
 Add BackSMTPBackoff
 Add BACKOFF feature
@@ -109,5 +122,5 @@ Official public open source release
 
 http://www.elandsys.com/scam/
 scam-backscatter
-Copyright © 2006 - 2009 Eland Systems All Rights Reserved.
+Copyright © 2006 - 2010 Eland Systems All Rights Reserved.
 

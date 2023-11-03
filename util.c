@@ -1,5 +1,5 @@
 /*
-Copyright © 2004-2008 Eland Systems All Rights Reserved.
+Copyright © 2004-2010 Eland Systems All Rights Reserved.
 
    1. Redistribution and use in source and binary forms must retain the above
    copyright notice, this list of conditions and the following disclaimer.
@@ -55,7 +55,7 @@ char* rfc822domain( char* rfc822addr )
 
 int hostss(char* host, struct sockaddr_storage *ss, short int iprefer)
 {
-	int ret;
+	int ret = 0;
 	struct addrinfo hints, *ai;
 
 	memset(&hints, 0, sizeof(hints));
@@ -78,8 +78,10 @@ int hostss(char* host, struct sockaddr_storage *ss, short int iprefer)
 	if (ret != 0)
 		return ret;
 
+	/* all  addresses should be used for connect */
 	memcpy( ss, ai->ai_addr, ai->ai_addrlen);
+
 	freeaddrinfo(ai);
 
-	return 0;
+	return ret;
 }
