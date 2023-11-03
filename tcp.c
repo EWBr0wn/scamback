@@ -174,27 +174,34 @@ clientread(int sockfd, char** buffer, size_t buffersize, unsigned int timeout )
 				break;
 
 			default:
-			if(FD_ISSET(sockfd, &readfd))
-			{
-				if (readbytes == buffersize)
+				if(FD_ISSET(sockfd, &readfd))
 				{
-					buffersize += BUFSIZE;
-					*buffer = (char *) realloc(*buffer, buffersize);
-				}
-				ret = recv( sockfd, *buffer + readbytes, buffersize - readbytes, flags);
-				if (ret > 0)
-				{
-					readbytes += ret;
-				}
-				else if (ret < 0)
-				{
-					if (errno != EINTR)
+					if (readbytes == buffersize)
+					{
+						char *p;
+
+						if ((p = realloc(*buffer, buffersize + BUFSIZE)) == NULL)
+						{
+							ret = -1;
+							break;
+						}
+						*buffer = p;
+						buffersize += BUFSIZE;
+					}
+					ret = recv( sockfd, *buffer + readbytes, buffersize - readbytes, flags);
+					if (ret > 0)
+					{
+						readbytes += ret;
+					}
+					else if (ret < 0)
+					{
+						if (errno != EINTR)
+							ret = -1;
+					} else if (ret == 0)
+					{
 						ret = -1;
-				} else if (ret == 0)
-				{
-					ret = -1;
+					}
 				}
-			}
 		}
 	} while (ret != -1);
 

@@ -147,6 +147,9 @@ not recommended as it can cause loss of mail.
 
 SM813 Compile time option for Sendmail 8.13.x and 8.14.x
 
+ALLDOMAINS Verify recipient addresses for all domains against the SMTP backend.
+The BackAddrDomain setting is not required.
+
 TROUBLESHOOTING
 
 The syslog facility is used to log information to maillog.  If you experience

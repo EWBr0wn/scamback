@@ -66,7 +66,7 @@ Copyright © 2006-2007 Eland Systems All Rights Reserved.
 #define RCPTREJTEXT " User unknown"
 #define TEMPFAILTEXT "Internal error"
 
-#define VERSION "1.3"
+#define VERSION "1.3.1"
 
 #ifndef MAXHOSTNAMELEN
 #define MAXHOSTNAMELEN 256
@@ -77,6 +77,7 @@ Copyright © 2006-2007 Eland Systems All Rights Reserved.
 #endif
 
 #define MAXSMTPWAIT 5
+#define RECVBUFLEN	1024
 
 struct backent {
 	char	*rcptaddr;
@@ -191,6 +192,7 @@ lookupbacklist(char *rcptaddr)
 			TAILQ_REMOVE(&backhead, bent, backentries);
 			free(bent->rcptaddr);
 			free(bent);
+			backexpire = 0;
 		}
 		else if (strcasecmp(bent->rcptaddr, rcptaddr) == 0)
 		{
@@ -250,7 +252,7 @@ savebacklist()
 	if ((fh = fopen( backlisttxt, "w+")) == NULL) {
 		return 1;
 	}
-	syslog (LOG_INFO, "reading cache %s", backlisttxt);
+	syslog (LOG_INFO, "saving cache %s", backlisttxt);
 	WRLOCK(back_lock);
 	for (bent = TAILQ_FIRST(&backhead); bent; bent = backnext)
 	{
@@ -303,14 +305,13 @@ smtpopen(SMFICTX *ctx)
 		return 0;
 	}
 
-	if ((buffer = malloc(1024)) == NULL)
+	if ((buffer = malloc(RECVBUFLEN)) == NULL)
 	{
 		close(priv->sockfd);
 		priv->sockfd = -2;
 		return 1;
 	}
-	rc = clientread( priv->sockfd, &buffer, 1023, 5 + smtpwait);
-	buffer[rc] = '\0';
+	rc = clientread( priv->sockfd, &buffer, RECVBUFLEN, 5 + smtpwait);
 
 	if (rc < 5)
 	{
@@ -327,17 +328,25 @@ smtpopen(SMFICTX *ctx)
 		return 0;
 	}
 
-	if (strncmp(buffer, "220", 3) != 0)
+	if ((*buffer != '2') || (*(buffer+1) != '2') || (*(buffer+2) != '0'))
 	{
 		free(buffer);
 		backerr(ctx);
 		return 1;
 	}
 
+	free(buffer);
+	if ((buffer = malloc(RECVBUFLEN)) == NULL)
+	{
+		close(priv->sockfd);
+		priv->sockfd = -2;
+		return 1;
+	}
+
 #ifdef EHLO
-	snprintf( buffer, 1024, "EHLO %s\r\n", hostname);
+	snprintf( buffer, RECVBUFLEN, "EHLO %s\r\n", hostname);
 #else
-	snprintf( buffer, 1024, "HELO %s\r\n", hostname);
+	snprintf( buffer, RECVBUFLEN, "HELO %s\r\n", hostname);
 #endif
 	lenbuf = strlen(buffer);
 	rc = clientwrite( priv->sockfd, buffer, lenbuf);
@@ -350,8 +359,7 @@ smtpopen(SMFICTX *ctx)
 		return 1;
 	}
 
-	rc = clientread( priv->sockfd, &buffer, 1023, 2 + smtpwait );
-	buffer[rc] = '\0';
+	rc = clientread( priv->sockfd, &buffer, RECVBUFLEN, 2 + smtpwait );
 
 	if (rc < 5)
 	{
@@ -368,15 +376,24 @@ smtpopen(SMFICTX *ctx)
 		return 1;
 	}
 
-	if (strncmp(buffer, "250", 3) != 0)
+	if ((*buffer != '2') || (*(buffer+1) != '5') || (*(buffer+2) != '0'))
 	{
+		buffer[rc]= '\0';
+		syslog (LOG_ERR, "cannot helocode");
 		free(buffer);
 		backerr(ctx);
-		syslog (LOG_ERR, "cannot helocode");
 		return 1;
 	}
 
-	snprintf( buffer, 1023, "MAIL FROM:<postmaster+backscatter@%s>\r\n", hostname);
+	free(buffer);
+	if ((buffer = malloc(RECVBUFLEN)) == NULL)
+	{
+		close(priv->sockfd);
+		priv->sockfd = -2;
+		return 1;
+	}
+
+	snprintf( buffer, RECVBUFLEN, "MAIL FROM:<postmaster+backscatter@%s>\r\n", hostname);
 	lenbuf = strlen(buffer);
 	rc = clientwrite( priv->sockfd, buffer, lenbuf);
 
@@ -388,8 +405,7 @@ smtpopen(SMFICTX *ctx)
 		return 1;
 	}
 
-	rc = clientread( priv->sockfd, &buffer, 1023 , 3);
-	buffer[rc] = '\0';
+	rc = clientread( priv->sockfd, &buffer, RECVBUFLEN , 3);
 
 	if (rc < 5)
 	{
@@ -399,17 +415,17 @@ smtpopen(SMFICTX *ctx)
 		return 1;
 	}
 
-	if (strncmp(buffer, "250", 3) != 0)
+	if ((*buffer != '2') || (*(buffer+1) != '5') || (*(buffer+2) != '0'))
 	{
-		if (strncmp(buffer, "55", 2) == 0)
+		if ((*buffer == '5') && (*(buffer+1) == '5'))
 		{
 			syslog (LOG_ERR, "backend did not accept sender address");
 		} else {
 			syslog (LOG_ERR, "cannot mailfromcode");
-			backerr(ctx);
 		}
 
 		free(buffer);
+		backerr(ctx);
 		return 1;
 	}
 	free(buffer);
@@ -425,14 +441,14 @@ smtpclose(SMFICTX *ctx)
 	char *buffer;
 	int lenbuf;
 
-	if ((buffer = malloc(1024)) == NULL)
+	if ((buffer = malloc(RECVBUFLEN)) == NULL)
 	{
 		close(priv->sockfd);
 		priv->sockfd = -2;
 		return 1;
 	}
 
-	snprintf( buffer, 1023, "RSET\r\n");
+	snprintf( buffer, RECVBUFLEN, "RSET\r\n");
 	lenbuf = strlen(buffer);
 	rc = clientwrite( priv->sockfd, buffer, lenbuf);
 
@@ -444,8 +460,7 @@ smtpclose(SMFICTX *ctx)
 		return 1;
 	}
 
-	rc = clientread( priv->sockfd, &buffer, 1023, 3 );
-	buffer[rc] = '\0';
+	rc = clientread( priv->sockfd, &buffer, RECVBUFLEN, 3 );
 
 	if (rc < 5)
 	{
@@ -455,7 +470,7 @@ smtpclose(SMFICTX *ctx)
 		return 1;
 	}
 
-	if (strncmp(buffer, "250", 3) != 0)
+	if ((*buffer != '2') || (*(buffer+1) != '5') || (*(buffer+2) != '0'))
 	{
 		free(buffer);
 		close(priv->sockfd);
@@ -463,7 +478,15 @@ smtpclose(SMFICTX *ctx)
 		return 1;
 	}
 
-	snprintf( buffer, 1023, "QUIT\r\n");
+	free(buffer);
+	if ((buffer = malloc(RECVBUFLEN)) == NULL)
+	{
+		close(priv->sockfd);
+		priv->sockfd = -2;
+		return 1;
+	}
+
+	snprintf( buffer, RECVBUFLEN, "QUIT\r\n");
 	lenbuf = strlen(buffer);
 	rc = clientwrite( priv->sockfd, buffer, lenbuf);
 
@@ -476,8 +499,7 @@ smtpclose(SMFICTX *ctx)
 		return 1;
 	}
 
-	rc = clientread( priv->sockfd, &buffer, 1023, 3 );
-	buffer[rc] = '\0';
+	rc = clientread( priv->sockfd, &buffer, RECVBUFLEN, 3 );
 
 	if (rc < 5)
 	{
@@ -496,6 +518,7 @@ smtpclose(SMFICTX *ctx)
 	return 0;
 }
 
+#ifndef ALLDOMAINS
 int
 check_dom(const char* domname)
 {
@@ -563,6 +586,7 @@ check_dom(const char* domname)
 
 	return ret;
 }
+#endif /* ALLDOMAINS */
 
 static sfsistat
 mlfi_connect(SMFICTX *ctx, char *hostname,  _SOCK_ADDR *hostaddr)
@@ -645,7 +669,11 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 	}
 
 	domain = rfc822domain(rcptaddr);
+#ifdef ALLDOMAINS
+	if (domain != NULL)
+#else
 	if ((domain != NULL) && (check_dom( domain) == 1))
+#endif
 	{
 		rc = lookupbacklist(rcptaddr);
 		switch (rc)
@@ -664,12 +692,13 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 					return SMFIS_TEMPFAIL;
 				}
 				SLIST_INSERT_HEAD(&priv->brcpt, rcpt, entries);
+				return SMFIS_CONTINUE;
 #else
 				if ((buffer = malloc(1024)) == NULL)
 				{
 					return SMFIS_TEMPFAIL;
 				}
-				snprintf( buffer, 1023, "%s", RCPTREJTEXT);
+				snprintf( buffer, 1024, "%s", RCPTREJTEXT);
 				smfi_setreply( ctx, "550", "5.1.1", buffer);
 				free(buffer);
 				return SMFIS_REJECT;
@@ -685,11 +714,11 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 
 		if (priv->sockfd >= 0)
 		{
-			if ((buffer = malloc(1024)) == NULL)
+			if ((buffer = malloc(RECVBUFLEN)) == NULL)
 			{
 				return SMFIS_TEMPFAIL;
 			}
-			snprintf( buffer, 1023, "RCPT TO:<%s>\r\n",rcptaddr);
+			snprintf( buffer, RECVBUFLEN, "RCPT TO:<%s>\r\n",rcptaddr);
 			lenbuf = strlen(buffer);
 			rc = clientwrite( priv->sockfd, buffer, lenbuf);
 
@@ -701,8 +730,7 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 				return SMFIS_TEMPFAIL;
 			}
 
-			rc = clientread( priv->sockfd, &buffer, 1023 , 3);
-			buffer[rc] = '\0';
+			rc = clientread( priv->sockfd, &buffer, RECVBUFLEN , 3);
 
 			if (rc < 5)
 			{
@@ -711,13 +739,14 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 				syslog (LOG_ERR, "cannot rcpttoreply on  %d", priv->sockfd);
 				return SMFIS_TEMPFAIL;
 			} else {
-				if ((strncmp(buffer, "550", 3) == 0) || (strncmp(buffer, "553", 3) == 0))
+				if (((*buffer == '5') && (*(buffer+1) == '5') && (*(buffer+2) == '0')) || ((*buffer == '5') && (*(buffer+1) == '5') && (*(buffer+2) == '3')))
 				{
 					upbacklist(rcptaddr, 1);
 #ifdef BITBUCKET
 					rcpt = (struct entry *)malloc(sizeof(struct entry));
 					if ((rcpt->c = strdup(rcptaddr)) == NULL)
 					{
+						free(buffer);
 						syslog (LOG_ERR, "cannot alloc rcpt");
 						(void) mlfi_cleanup(ctx);
 						return SMFIS_TEMPFAIL;
@@ -730,7 +759,7 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 					return SMFIS_REJECT;
 #endif /* BITBUCKET */
 				}
-				else if (strncmp(buffer, "250", 3) == 0)
+				else if ((*buffer == '2') && (*(buffer+1) == '5') && (*(buffer+2) == '0'))
 				{
 					upbacklist(rcptaddr, 0);
 				}
@@ -1109,6 +1138,9 @@ int back_readconf(const char* conf)
 	}
 	fclose(fh);
 
+#ifdef ALLDOMAINS
+	syslog (LOG_DEBUG, "BackAddrDomain all domains");
+#endif
 	return 0;
 }
 
@@ -1337,4 +1369,3 @@ main(int argc, char *argv[])
 	syslog (LOG_INFO, "Exit");
 	return(ret);
 }
-
