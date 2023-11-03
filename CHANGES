@@ -1,5 +1,17 @@
 scam-backscatter milter Changes
 
+Version 1.3 unreleased September 12, 2007
+
+Add BITBUCKET compilation switch to silently delete recipient addresses
+Add -b command line switch to read and save list of recipient addresses
+Add BackList
+Add changed umask behavior
+Add smtpwait
+Add SM813 compilation switch
+Fix bug when calling rcpt_addr macro
+Fix Test for invalid file descriptor.  Problem reported by Robert Haskins
+Fix Memory leak in SMTP connection. Problem reported by Robert Haskins
+
 Version 1.2.2 July 25, 2007
 
 Add EHLO compilation switch

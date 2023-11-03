@@ -33,6 +33,8 @@ INSTALL
 
       INPUT_MAIL_FILTER(`scam-back', `S=unix:/var/spool/scam/scam-back.sock, F=T, T=S:240s;R:240s;E:5m')dnl
 
+	The line should be added to the .mc file used to create the sendmail.cf.
+
 3.  Create a user (scamback for example) which will be used to run the milter
 
 4.  Create the /var/spool/scam directory
@@ -40,18 +42,32 @@ INSTALL
 5.  Verify that the user created in step 3 has read-write access to the
     /var/spool/scam directory
 
+Alternately, you can use a TCP socket for the milter by using the following for
+step 2:
+
+	INPUT_MAIL_FILTER(`scam-back', `S=inet@8900@localhost, F=T, T=S:240s;R:240s;E:5m')dnl
+
+Start the milter with the -p inet@8900@localhost parameter.
+
 START UP
 
-1. Start scam-backscatter milter as a daemon
+1. Start Scam-backscatter milter as a daemon
 
 	  scam-back -p unix:/var/spool/scam/scam-back.sock -u scamback -D
 
-4. Restart sendmail if you have generated a new sendmail configuration when
+2. Restart sendmail if you have generated a new sendmail configuration when
    installing scam-backscatter
+
+The -b path parameter specifies the file location where Scam-backscatter
+will read the recipient addresses at startup or save them at shutdown.
+For example:
+
+scam-back -p unix:/var/spool/scam/scam-back.sock -u scamback
+ -b /var/spool/scam/backscatter.txt -D
 
 SHUTDOWN
 
-Type the following command to stop scam-grey
+Type the following command to stop Scam-backscatter
 
 	kill `cat /var/spool/scam/scam-back.pid`
 
@@ -69,7 +85,7 @@ default.
 
 BackSMTPPort:25
 
-Once scam-backscatter verification finds a valid email addresses, it gets
+Once Scam-backscatter verification finds a valid email addresses, it gets
 cached.  The default expiry value is 86400 seconds.
 
 BackValidAddrExp:86400
@@ -79,11 +95,16 @@ expiry value is 3000 seconds.
 
 BackInvalidAddrExp:3000
 
-When BackAddrSubdomain is set to yes, scam-backscatter will verify
+When BackAddrSubdomain is set to yes, Scam-backscatter will verify
 subdomain email addresses (user@mail.example.net) as well if
 example.net is listed as a domain to be verified.  This default value is no.
 
 BackAddrSubdomains:Yes
+
+The BackList setting points to the file where the list of valid and invalid
+recipient addresses is read from at startup and saved to at shutdown
+
+BackList:/var/spool/scam/backscatter.txt
 
 Your users can bypass the backscatter check by relaying through your
 server using port 587 instead of port 25.
@@ -102,6 +123,13 @@ Second instance:
 scam-back -p unix:/var/spool/scam/scam-back2.sock -u scamback \
 -f /etc/mail/scam2.conf -P /var/spool/scam/scam-back2.pid -D
 
+SMTP Backend out of service
+
+Scam-backscatter can cache valid and invalid recipient addresses. If the
+SMTP backend is out of service, you can stop the Scam-backscatter milter,
+increase the BackValidAddrExp and BackInvalidAddrExp values and restart
+the milter.
+
 FEATURES
 
 These compile time options can be enabled by appending
@@ -113,6 +141,39 @@ USEMAILERTABLE Reads the list of domains to verify and the backend SMTP
 server IP address from sendmail's mailertable file.
 
 example.com            SMTP:[192.0.2.1]
+
+BITBUCKET Silently deletes invalid recipients.  This feature is
+not recommended as it can cause loss of mail.
+
+SM813 Compile time option for Sendmail 8.13.x and 8.14.x
+
+TROUBLESHOOTING
+
+The syslog facility is used to log information to maillog.  If you experience
+any trouble, verify your maillog for errors.
+
+Scam-backscatter initiates a SMTP session with the Backend SMTP server.  If
+the Backend rate limits SMTP connections, it may cause Scam-backscatter
+to fail.
+
+Scam-backscatter may fail if it the system runs out of file descriptors.
+Refer to your operating system documentation to find out how to increase that.
+
+The following is used on CentOS:
+
+ulimit -n 4096
+ulimit -s 2048
+
+If you see the following error in your mail log:
+
+ scam-back: accept() returned invalid socket (Numerical result out of range), try again
+
+recompile libmilter with the following option:
+
+ APPENDDEF(`confENVDEF', `-DSM_CONF_POLL=1 ')dnl
+
+Refer to http://www.elandsys.com/resources/sendmail/milter.html for more
+information about libmilter.
 
 http://www.elandsys.com/scam/
 scam-backscatter

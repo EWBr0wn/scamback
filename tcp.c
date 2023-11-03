@@ -150,6 +150,9 @@ clientread(int sockfd, char** buffer, size_t buffersize, unsigned int timeout )
 	if (*buffer == NULL)
 		return -1;
 
+	if (sockfd < 0)
+		return -1;
+
 	FD_ZERO (&readfd);
 	FD_SET (sockfd, &readfd);
 
@@ -161,7 +164,7 @@ clientread(int sockfd, char** buffer, size_t buffersize, unsigned int timeout )
 			case -1:
 				if (errno != EINTR)
 				{
-					syslog( LOG_ERR, "clientread fail %d on %d", errno, sockfd);
+					syslog( LOG_ERR, "clientread fail error %d on fd %d", errno, sockfd);
 					ret = -1;
 				}
 				break;
@@ -206,6 +209,9 @@ clientwrite(int sockfd, char* buffer, int len)
 	struct timeval interval;
 	int nwrite = 0;
 
+	if (sockfd < 0)
+		return -1;
+
 	interval.tv_sec = 1;
     interval.tv_usec = 0;
 
@@ -227,7 +233,7 @@ clientwrite(int sockfd, char* buffer, int len)
 
 	if (nwrite != (int) len)
 	{
-		syslog( LOG_ERR, "clientwrite fail %d", errno);
+		syslog( LOG_ERR, "clientwrite fail error %d", errno);
 		return -1;
 	}
 

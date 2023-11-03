@@ -66,7 +66,7 @@ Copyright © 2006-2007 Eland Systems All Rights Reserved.
 #define RCPTREJTEXT " User unknown"
 #define TEMPFAILTEXT "Internal error"
 
-#define VERSION "1.2.2"
+#define VERSION "1.3"
 
 #ifndef MAXHOSTNAMELEN
 #define MAXHOSTNAMELEN 256
@@ -75,6 +75,8 @@ Copyright © 2006-2007 Eland Systems All Rights Reserved.
 #ifdef USEMAILERTABLE
 #define MAILERTABLE "/etc/mail/mailertable"
 #endif
+
+#define MAXSMTPWAIT 5
 
 struct backent {
 	char	*rcptaddr;
@@ -95,15 +97,27 @@ struct doment {
 
 SLIST_HEAD(, doment) domlist;
 
+#ifdef BITBUCKET
+struct entry {
+	char	*c;
+	SLIST_ENTRY(entry)	entries;
+};
+#endif
+
 static int backvaexp = 86400;
 static int backinexp = 3000;
 char *backsmtpserver = NULL;
 static int backsmtpport = 25;
 static int addrsubdomain = 0;
+static unsigned int smtpwait = 0;
 char hostname[MAXHOSTNAMELEN+1];
+char *backlisttxt = NULL;
 
 struct mlfiPriv {
 	int	sockfd;
+#ifdef BITBUCKET
+	SLIST_HEAD(, entry)	brcpt;
+#endif
 } mlfi_priv;
 
 
@@ -189,6 +203,73 @@ lookupbacklist(char *rcptaddr)
 	return ret;
 }
 
+int
+loadbacklist()
+{
+	int ret = 0;
+	FILE *fh;
+	char line[512];
+	int response;
+	char email[500];
+
+	if (backlisttxt == NULL)
+		return ret;
+
+	if ((fh = fopen( backlisttxt, "r")) == NULL) {
+		return 1;
+	}
+
+	while( fgets(line, 511, fh) )
+	{
+		if (strlen(line) > 5)
+		{
+			if (sscanf( line, "%u %500[^\n]", &response, email) == 2)
+			{
+				upbacklist(email, response);
+			}
+		}
+	}
+	fclose(fh);
+
+	return ret;
+}
+
+int
+savebacklist()
+{
+
+	struct backent *bent;
+	struct backent *backnext;
+	int ret = 0;
+	FILE *fh;
+	char line[512];
+
+	if (backlisttxt == NULL)
+		return ret;
+
+	if ((fh = fopen( backlisttxt, "w+")) == NULL) {
+		return 1;
+	}
+	syslog (LOG_INFO, "reading cache %s", backlisttxt);
+	WRLOCK(back_lock);
+	for (bent = TAILQ_FIRST(&backhead); bent; bent = backnext)
+	{
+		backnext = TAILQ_NEXT(bent, backentries);
+
+		snprintf( line, 511, "%u %s\n", bent->resp, bent->rcptaddr);
+		if (fputs(line, fh) != 0)
+		{
+			UNLOCK(back_lock);
+			fclose(fh);
+			return 1;
+		}
+	}
+	UNLOCK(back_lock);
+	fclose(fh);
+
+	return ret;
+}
+
 static int
 backerr(SMFICTX *ctx)
 {
@@ -228,14 +309,21 @@ smtpopen(SMFICTX *ctx)
 		priv->sockfd = -2;
 		return 1;
 	}
-	rc = clientread( priv->sockfd, &buffer, 1023, 5);
-	buffer[rc] = 0;
+	rc = clientread( priv->sockfd, &buffer, 1023, 5 + smtpwait);
+	buffer[rc] = '\0';
 
 	if (rc < 5)
 	{
 		free(buffer);
 		backerr(ctx);
 		syslog (LOG_WARNING, "cannot read banner");
+		if (smtpwait < MAXSMTPWAIT)
+		{
+			WRLOCK(back_lock);
+			smtpwait++;
+			UNLOCK(back_lock);
+			syslog (LOG_INFO, "increased smtpwait to %d", smtpwait);
+		}
 		return 0;
 	}
 
@@ -262,14 +350,21 @@ smtpopen(SMFICTX *ctx)
 		return 1;
 	}
 
-	rc = clientread( priv->sockfd, &buffer, 1023, 3 );
-	buffer[rc] = 0;
+	rc = clientread( priv->sockfd, &buffer, 1023, 2 + smtpwait );
+	buffer[rc] = '\0';
 
 	if (rc < 5)
 	{
 		free(buffer);
 		backerr(ctx);
 		syslog (LOG_ERR, "cannot heloreply");
+		if (smtpwait < MAXSMTPWAIT)
+		{
+			WRLOCK(back_lock);
+			smtpwait++;
+			UNLOCK(back_lock);
+			syslog (LOG_INFO, "increased smtpwait to %d", smtpwait);
+		}
 		return 1;
 	}
 
@@ -294,7 +389,7 @@ smtpopen(SMFICTX *ctx)
 	}
 
 	rc = clientread( priv->sockfd, &buffer, 1023 , 3);
-	buffer[rc] = 0;
+	buffer[rc] = '\0';
 
 	if (rc < 5)
 	{
@@ -317,6 +412,8 @@ smtpopen(SMFICTX *ctx)
 		free(buffer);
 		return 1;
 	}
+	free(buffer);
+
 	return 0;
 }
 
@@ -348,7 +445,7 @@ smtpclose(SMFICTX *ctx)
 	}
 
 	rc = clientread( priv->sockfd, &buffer, 1023, 3 );
-	buffer[rc] = 0;
+	buffer[rc] = '\0';
 
 	if (rc < 5)
 	{
@@ -380,7 +477,7 @@ smtpclose(SMFICTX *ctx)
 	}
 
 	rc = clientread( priv->sockfd, &buffer, 1023, 3 );
-	buffer[rc] = 0;
+	buffer[rc] = '\0';
 
 	if (rc < 5)
 	{
@@ -514,6 +611,17 @@ mlfi_connect(SMFICTX *ctx, char *hostname,  _SOCK_ADDR *hostaddr)
 	return SMFIS_CONTINUE;
 }
 
+#ifdef BITBUCKET
+static sfsistat
+mlfi_envfrom(SMFICTX *ctx, char **argv)
+{
+	struct mlfiPriv *priv = MLFIPRIV;
+
+	SLIST_INIT(&priv->brcpt);
+	return SMFIS_CONTINUE;
+}
+#endif
+
 static sfsistat
 mlfi_envrcpt(SMFICTX *ctx, char **argv)
 {
@@ -522,10 +630,19 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 	char *buffer;
 	int lenbuf;
 	char *domain;
+#ifdef BITBUCKET
+	struct entry *rcpt;
+#endif
 
 	struct mlfiPriv *priv = MLFIPRIV;
 
 	rcptaddr  = smfi_getsymval(ctx, "{rcpt_addr}");
+
+	if (rcptaddr == NULL)
+	{
+		syslog (LOG_ERR, "cannot get rcpt address");
+		return SMFIS_TEMPFAIL;
+	}
 
 	domain = rfc822domain(rcptaddr);
 	if ((domain != NULL) && (check_dom( domain) == 1))
@@ -538,6 +655,16 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 				break;
 
 			case 1:
+#ifdef BITBUCKET
+				rcpt = (struct entry *)malloc(sizeof(struct entry));
+				if ((rcpt->c = strdup(rcptaddr)) == NULL)
+				{
+					syslog (LOG_ERR, "cannot alloc rcpt");
+					(void) mlfi_cleanup(ctx);
+					return SMFIS_TEMPFAIL;
+				}
+				SLIST_INSERT_HEAD(&priv->brcpt, rcpt, entries);
+#else
 				if ((buffer = malloc(1024)) == NULL)
 				{
 					return SMFIS_TEMPFAIL;
@@ -546,6 +673,7 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 				smfi_setreply( ctx, "550", "5.1.1", buffer);
 				free(buffer);
 				return SMFIS_REJECT;
+#endif /* BITBUCKET */
 				break;
 		}
 
@@ -574,7 +702,7 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 			}
 
 			rc = clientread( priv->sockfd, &buffer, 1023 , 3);
-			buffer[rc] = 0;
+			buffer[rc] = '\0';
 
 			if (rc < 5)
 			{
@@ -586,10 +714,21 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 				if ((strncmp(buffer, "550", 3) == 0) || (strncmp(buffer, "553", 3) == 0))
 				{
 					upbacklist(rcptaddr, 1);
+#ifdef BITBUCKET
+					rcpt = (struct entry *)malloc(sizeof(struct entry));
+					if ((rcpt->c = strdup(rcptaddr)) == NULL)
+					{
+						syslog (LOG_ERR, "cannot alloc rcpt");
+						(void) mlfi_cleanup(ctx);
+						return SMFIS_TEMPFAIL;
+					}
+					SLIST_INSERT_HEAD(&priv->brcpt, rcpt, entries);
+#else
 					snprintf( buffer, 1023, "%s", RCPTREJTEXT);
 					smfi_setreply( ctx, "550", "5.1.1", buffer);
 					free(buffer);
 					return SMFIS_REJECT;
+#endif /* BITBUCKET */
 				}
 				else if (strncmp(buffer, "250", 3) == 0)
 				{
@@ -615,6 +754,28 @@ mlfi_header(SMFICTX *ctx, char *headerf, char *headerv)
 	return SMFIS_CONTINUE;
 }
 
+#ifdef BITBUCKET
+static sfsistat
+mlfi_eom(SMFICTX *ctx)
+{
+	struct mlfiPriv *priv= MLFIPRIV;
+	struct entry *rcpt;
+
+	while (!SLIST_EMPTY(&priv->brcpt))
+	{
+		rcpt = SLIST_FIRST(&priv->brcpt);
+		if (smfi_delrcpt( ctx, rcpt->c) == MI_FAILURE)
+		{
+			syslog (LOG_ERR, "cannot delete recipient");
+		}
+		free(rcpt->c);
+		SLIST_REMOVE_HEAD(&priv->brcpt, entries);
+		free(rcpt);
+	}
+	return SMFIS_ACCEPT;
+}
+#endif
+
 sfsistat
 mlfi_abort(SMFICTX *ctx)
 {
@@ -627,6 +788,9 @@ mlfi_abort(SMFICTX *ctx)
 static sfsistat
 mlfi_cleanup(SMFICTX *ctx)
 {
+#ifdef BITBUCKET
+	struct entry *rcpt;
+#endif
 	struct mlfiPriv *priv = MLFIPRIV;
 
 	if (priv == NULL)
@@ -636,6 +800,16 @@ mlfi_cleanup(SMFICTX *ctx)
 	{
 		smtpclose(ctx);
 	}
+
+#ifdef BITBUCKET
+	while (!SLIST_EMPTY(&priv->brcpt))
+	{
+		rcpt = SLIST_FIRST(&priv->brcpt);
+		free(rcpt->c);
+		SLIST_REMOVE_HEAD(&priv->brcpt, entries);
+		free(rcpt);
+	}
+#endif
 
 	return 0;
 
@@ -661,15 +835,27 @@ struct smfiDesc smfilter =
 {
 	"scam-back",	/* filter name */
 	SMFI_VERSION,	/* version code -- do not change */
+#ifdef BITBUCKET
+	SMFIF_ADDHDRS|SMFIF_DELRCPT,
+#else
 	SMFIF_ADDHDRS,	/* flags */
+#endif
 	mlfi_connect,		/* connection info filter */
 	NULL,		/* SMTP HELO command filter */
+#ifdef BITBUCKET
+	mlfi_envfrom,
+#else
 	NULL,		/* envelope sender filter */
+#endif
 	mlfi_envrcpt,	/* envelope recipient filter */
 	mlfi_header,				/* header filter */
 	NULL,	/* end of header */
 	NULL,			/* body block filter */
+#ifdef BITBUCKET
+	mlfi_eom,
+#else
 	NULL,	/* end of message */
+#endif
 	mlfi_abort,	/* message aborted */
 	mlfi_close,	/* connection cleanup */
 };
@@ -678,11 +864,12 @@ static void
 usage()
 {
 	fprintf(stdout, "scam-back version %s\n", VERSION);
-    fprintf(stdout, "usage: scam-back -p protocol:address [-u user] [-g group] [-T timeout] [-f config] [-P pidfile] [-R] [-D]\n");
+    fprintf(stdout, "usage: scam-back -p protocol:address [-u user] [-g group] [-T timeout] [-f config] [-P pidfile] [-b path] [-R] [-D]\n");
 	fprintf(stdout, "          -D run as a daemon\n");
 	fprintf(stdout, "          -u run as specified user\n");
 	fprintf(stdout, "          -f use specified configuration file\n");
 	fprintf(stdout, "          -P use specified pid file\n");
+	fprintf(stdout, "          -b read and save recipient addresses to file\n");
 }
 
 static void
@@ -833,6 +1020,9 @@ int back_readconf(const char* conf)
 	struct doment *domadd;
 #endif
 
+#ifdef BITBUCKET
+	syslog (LOG_INFO, "bitbucket enabled");
+#endif
 	if ((fh = fopen( conf, "r")) == NULL)
 	{
 		return 1;
@@ -872,8 +1062,8 @@ int back_readconf(const char* conf)
 				if (strlen(buf) > 6)
 				{
 					backsmtpserver = strdup(buf);
+					syslog (LOG_DEBUG, "BackSMTPServer %s", buf);
 				}
-				syslog (LOG_DEBUG, "BackSMTPServer %s", buf);
 			}
 			else if (sscanf( line, "BackAddrDomain:%256[A-Za-z0-9-.]", buf) == 1)
 			{
@@ -907,6 +1097,14 @@ int back_readconf(const char* conf)
 					syslog (LOG_DEBUG, "BackAddrSubdomains %s", buf);
 				}
 			}
+			else if (sscanf( line, "BackList:%255[^\n]", buf) == 1)
+			{
+				if (strlen(buf) > 3)
+				{
+					backlisttxt = strdup(buf);
+					syslog (LOG_DEBUG, "BackList %s", buf);
+				}
+			}
 		}
 	}
 	fclose(fh);
@@ -919,7 +1117,7 @@ main(int argc, char *argv[])
 {
 	int c;
 	int ret;
-	const char *args = "p:T:h:u:f:g:P:D";
+	const char *args = "p:T:h:u:f:g:b:P:D";
 	extern char *optarg;
 	int daemonmode = 0;
 	struct passwd *passwd = NULL;
@@ -930,8 +1128,6 @@ main(int argc, char *argv[])
 	gid_t gid = 0;
 	char *conf = NULL;
 	char *pidfile =NULL;
-
-	umask(077);
 
 	/* already a daemon */
 	if(getppid()==1)
@@ -1025,6 +1221,15 @@ main(int argc, char *argv[])
 				pidfile = strdup(optarg);
 				break;
 
+			case 'b':
+				if (optarg == NULL || *optarg == '\0')
+				{
+					(void) fprintf(stderr, "Invalid file for backup of recipient addresses\n");
+					exit(EX_USAGE);
+				}
+				backlisttxt = strdup(optarg);
+				break;
+
 		  case 'd':
 			if (optarg == NULL || *optarg == '\0')
             {
@@ -1065,7 +1270,13 @@ main(int argc, char *argv[])
 		syslog (LOG_ERR, "smfi_register failed");
 		exit(EX_UNAVAILABLE);
 	}
-
+#ifdef SM813
+	if (smfi_opensocket(0) == MI_FAILURE)
+	{
+		syslog (LOG_ERR, "smfi_opensocket failed");
+		exit(EX_UNAVAILABLE);
+	}
+#endif
 	memset(hostname, '\0', sizeof hostname);
 	if (gethostname(hostname, sizeof hostname) != 0)
 	{
@@ -1105,6 +1316,7 @@ main(int argc, char *argv[])
 		syslog(LOG_ERR,  "pthread_rwlock_init failed: %s", strerror(ret));
 		exit(EX_OSERR);
 	}
+	loadbacklist();
 
 	if (pidfile == NULL)
 		pidfile = strdup(PIDFILE);
@@ -1114,7 +1326,13 @@ main(int argc, char *argv[])
 		daemonize(pidfile);
 	}
 
+	if (group == NULL)
+		umask(0177);
+	else
+		umask(0117);
+
 	ret = smfi_main();
+	savebacklist();
 	unlink(pidfile);
 	syslog (LOG_INFO, "Exit");
 	return(ret);
