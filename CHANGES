@@ -1,5 +1,8 @@
 scam-backscatter milter Changes
 
+Version 1.2.1 April 24, 2007
+Fix typo in BackSMTPPort setting
+
 Version 1.2 March 26, 2007
 
 Add BackSMTPPort

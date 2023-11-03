@@ -62,9 +62,9 @@ Copyright © 2006-2007 Eland Systems All Rights Reserved.
 
 #define LINELENGTH 1024
 #define SCAMCONF "/etc/mail/scam.conf"
-#define RCPTREJTEXT "... User unknown"
+#define RCPTREJTEXT " User unknown"
 
-#define VERSION "1.2"
+#define VERSION "1.2.1"
 
 struct backent {
 	char	*rcptaddr;
@@ -291,9 +291,15 @@ smtpopen(SMFICTX *ctx)
 
 	if (strncmp(buffer, "250", 3) != 0)
 	{
+		if (strncmp(buffer, "55", 2) == 0)
+		{
+			syslog (LOG_ERR, "backend did not accept sender address");
+		} else {
+			syslog (LOG_ERR, "cannot mailfromcode");
+			backerr(ctx);
+		}
+
 		free(buffer);
-		backerr(ctx);
-		syslog (LOG_ERR, "cannot mailfromcode");
 		return 1;
 	}
 	return 0;
@@ -474,7 +480,7 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 				{
 					return SMFIS_TEMPFAIL;
 				}
-				snprintf( buffer, 1023, "%s%s", rcptaddr, RCPTREJTEXT);
+				snprintf( buffer, 1023, "%s", RCPTREJTEXT);
 				smfi_setreply( ctx, "550", "5.1.1", buffer);
 				free(buffer);
 				return SMFIS_REJECT;
@@ -515,10 +521,10 @@ mlfi_envrcpt(SMFICTX *ctx, char **argv)
 				syslog (LOG_ERR, "cannot rcpttoreply on  %d", priv->sockfd);
 				return SMFIS_TEMPFAIL;
 			} else {
-				if (strncmp(buffer, "550", 3) == 0)
+				if ((strncmp(buffer, "550", 3) == 0) || (strncmp(buffer, "553", 3) == 0))
 				{
 					upbacklist(rcptaddr, 1);
-					snprintf( buffer, 1023, "%s%s", rcptaddr, RCPTREJTEXT);
+					snprintf( buffer, 1023, "%s", RCPTREJTEXT);
 					smfi_setreply( ctx, "550", "5.1.1", buffer);
 					free(buffer);
 					return SMFIS_REJECT;
@@ -758,7 +764,7 @@ int back_readconf(const char* conf)
 					SLIST_INSERT_HEAD(&domlist, domadd, domentries);
 					syslog (LOG_DEBUG, "BackAddrDomain %s", buf);
 				}
-			} else if (sscanf( line, "backismtpport:%5[0-9]", buf) == 1)
+			} else if (sscanf( line, "BackSMTPPort:%5[0-9]", buf) == 1)
 			{
 				int num;
 
